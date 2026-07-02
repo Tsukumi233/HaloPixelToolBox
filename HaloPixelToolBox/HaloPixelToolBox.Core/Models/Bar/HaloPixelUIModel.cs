@@ -1,4 +1,4 @@
-﻿namespace HaloPixelToolBox.Core.Models;
+﻿namespace HaloPixelToolBox.Core.Models.Bar;
 
 /// <summary>
 /// 花再像素UI模型

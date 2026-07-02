@@ -1,4 +1,4 @@
-﻿using HaloPixelToolBox.Core.Models;
+﻿using HaloPixelToolBox.Core.Models.Bar;
 using HidSharp;
 using XFEExtension.NetCore.StringExtension;
 

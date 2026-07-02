@@ -1,4 +1,4 @@
-﻿namespace HaloPixelToolBox.Core.Models;
+﻿namespace HaloPixelToolBox.Core.Models.Bar;
 
 public enum HaloPixelTextLayout
 {

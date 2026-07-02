@@ -9,12 +9,13 @@
   <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
     <PackageReference Include="HidSharp" Version="2.6.4" />
-    <PackageReference Include="XFEExtension.NetCore" Version="4.2.0" />
+    <PackageReference Include="XFEExtension.NetCore" Version="4.2.4" />
     <PackageReference Include="XFEExtension.NetCore.MemoryEditor" Version="2.1.0" />
-    <PackageReference Include="XFEExtension.NetCore.XFEConsole" Version="2.0.0" />
-    <PackageReference Include="XFEExtension.NetCore.AutoConfig" Version="2.0.*" />
+    <PackageReference Include="XFEExtension.NetCore.ServerInteractive" Version="3.1.0" />
+    <PackageReference Include="XFEExtension.NetCore.XFEConsole" Version="2.2.2" />
+    <PackageReference Include="XFEExtension.NetCore.AutoConfig" Version="3.0.0" />
     <PackageReference Include="XFEExtension.NetCore.InputSimulator" Version="2.3.0" />
-    <PackageReference Include="XFEExtension.NetCore.UpgradeHelper" Version="1.0.1" />
+    <PackageReference Include="XFEExtension.NetCore.UpgradeHelper" Version="2.0.0" />
   </ItemGroup>
 
 </Project>

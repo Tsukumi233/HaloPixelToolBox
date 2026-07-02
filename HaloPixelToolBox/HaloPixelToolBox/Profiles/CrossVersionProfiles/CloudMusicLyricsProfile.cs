@@ -1,4 +1,4 @@
-﻿using HaloPixelToolBox.Core.Models;
+﻿using HaloPixelToolBox.Core.Models.Bar;
 using XFEExtension.NetCore.AutoConfig;
 using XFEExtension.NetCore.WinUIHelper.Utilities.Helper;
 

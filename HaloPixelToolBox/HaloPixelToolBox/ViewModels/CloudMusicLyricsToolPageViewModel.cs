@@ -1,4 +1,5 @@
 ﻿using CommunityToolkit.Mvvm.ComponentModel;
+using HaloPixelToolBox.Core.Models.Bar;
 using HaloPixelToolBox.Core.Utilities;
 using HaloPixelToolBox.Profiles.CrossVersionProfiles;
 using System.Diagnostics;
@@ -152,7 +153,7 @@ public partial class CloudMusicLyricsToolPageViewModel : ServiceBaseViewModelBas
             if (DeviceReady)
             {
                 Console.WriteLine("花再设备已就绪，显示启动信息");
-                Device.SetTextLayout(Core.Models.HaloPixelTextLayout.Center);
+                Device.SetTextLayout(HaloPixelTextLayout.Center);
                 Device.ShowText("花再工具箱已启动~");
                 await Task.Delay(3000);
                 Console.WriteLine("OK");
@@ -193,7 +194,7 @@ public partial class CloudMusicLyricsToolPageViewModel : ServiceBaseViewModelBas
                                     {
                                         scrolled = true;
                                         await Task.Delay(500);
-                                        Device.SetTextLayout(Core.Models.HaloPixelTextLayout.ScrollRightToLeft);
+                                        Device.SetTextLayout(HaloPixelTextLayout.ScrollRightToLeft);
                                     }
                                 }
                                 await Task.Delay(50);
