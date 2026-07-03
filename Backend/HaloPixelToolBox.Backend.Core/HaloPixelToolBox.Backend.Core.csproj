@@ -1,0 +1,17 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.*" />
+    <PackageReference Include="XFEExtension.NetCore" Version="4.2.*" />
+    <PackageReference Include="XFEExtension.NetCore.AutoConfig" Version="2.0.*" />
+    <PackageReference Include="XFEExtension.NetCore.TodoHighLight" Version="1.0.*" />
+    <PackageReference Include="XFEExtension.NetCore.XFEConsole" Version="2.2.*" />
+  </ItemGroup>
+
+</Project>

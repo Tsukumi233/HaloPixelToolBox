@@ -4,20 +4,33 @@
     <Platform Name="x64" />
     <Platform Name="x86" />
   </Configurations>
+  <Folder Name="/Backend/">
+    <Project Path="Backend/HaloPixelToolBox.Backend.Core/HaloPixelToolBox.Backend.Core.csproj" Id="de8f9aab-af25-47fc-a5d7-623f967e6f1b" />
+    <Project Path="Backend/HaloPixelToolBox.Backend.Test/HaloPixelToolBox.Backend.Test.csproj" Id="8a43bd0c-7e49-4e10-bba0-206345344424" />
+    <Project Path="Backend/HaloPixelToolBox.Backend/HaloPixelToolBox.Backend.csproj" Id="80b79a1a-2e55-4fc2-ad6a-b2b80e6d0aab">
+      <Platform Solution="*|ARM64" Project="ARM64" />
+      <Platform Solution="*|x64" Project="x64" />
+      <Platform Solution="*|x86" Project="x86" />
+      <Deploy />
+    </Project>
+  </Folder>
   <Folder Name="/Client/">
-    <Project Path="Client/HaloPixelToolBox.Installer/HaloPixelToolBox.Installer.csproj" Id="2ff32c8b-4030-4872-af93-8176e0a1edec" />
+    <Project Path="Client/HaloPixelToolBox.Client.Core/HaloPixelToolBox.Client.Core.csproj" />
+    <Project Path="Client/HaloPixelToolBox.Client.Test/HaloPixelToolBox.Client.Test.csproj" />
     <Project Path="Client/HaloPixelToolBox.Client/HaloPixelToolBox.Client.csproj">
       <Platform Solution="*|ARM64" Project="ARM64" />
       <Platform Solution="*|x64" Project="x64" />
       <Platform Solution="*|x86" Project="x86" />
       <Deploy />
     </Project>
-    <Project Path="Client/HaloPixelToolBox.Client.Test/HaloPixelToolBox.Client.Test.csproj" />
+    <Project Path="Client/HaloPixelToolBox.Installer/HaloPixelToolBox.Installer.csproj" Id="2ff32c8b-4030-4872-af93-8176e0a1edec" />
   </Folder>
   <Folder Name="/Core/">
     <Project Path="Core/HaloPixelToolBox.Core/HaloPixelToolBox.Core.csproj" />
   </Folder>
   <Folder Name="/Server/">
+    <Project Path="Server/HaloPixelToolBox.Server.Core/HaloPixelToolBox.Server.Core.csproj" Id="b198487c-3e3a-4924-9a80-2ee224d80a3f" />
+    <Project Path="Server/HaloPixelToolBox.Server.Test/HaloPixelToolBox.Server.Test.csproj" Id="03336589-8d1b-468d-8035-2585cf2c31d0" />
     <Project Path="Server/HaloPixelToolBox.Server/HaloPixelToolBox.Server.csproj" Id="8483c595-234b-447b-92e5-a92090e7a46d" />
   </Folder>
 </Solution>

@@ -1,0 +1,170 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="HaloPixelToolBox.Views.LogViewPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:converter="using:XFEExtension.NetCore.WinUIHelper.Utilities.Converter"
+    xmlns:log="using:XFEExtension.NetCore.XFEConsole"
+    xmlns:selector="using:HaloPixelToolBox.Utilities.Selector"
+    mc:Ignorable="d">
+    <Page.Resources>
+        <converter:EmptyStringConverter x:Key="EmptyStringConverter"/>
+        <converter:DateTimeOffsetConverter x:Key="DateTimeOffsetConverter"/>
+        <DataTemplate x:Key="DebugDataTemplate" x:DataType="log:XFELogEntry">
+            <Grid ColumnSpacing="16" Margin="0,4">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="80"/>
+                    <ColumnDefinition Width="150"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock ToolTipService.ToolTip="调试" Text="DEBUG" Foreground="{ThemeResource DebugTextColor}" VerticalAlignment="Center"/>
+                <TextBlock ToolTipService.ToolTip="{x:Bind Time}" Grid.Column="1" Text="{x:Bind Time}" VerticalAlignment="Center"/>
+                <TextBlock ToolTipService.ToolTip="{x:Bind LogText, Converter={StaticResource EmptyStringConverter}}" Grid.Column="2" Text="{x:Bind LogText, Converter={StaticResource EmptyStringConverter}}" Foreground="{ThemeResource DebugTextColor}" VerticalAlignment="Center"/>
+            </Grid>
+        </DataTemplate>
+        <DataTemplate x:Key="TraceDataTemplate" x:DataType="log:XFELogEntry">
+            <Grid ColumnSpacing="16" Margin="0,4">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="80"/>
+                    <ColumnDefinition Width="150"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock ToolTipService.ToolTip="跟踪" Text="TRACE" Foreground="{ThemeResource SystemFillColorSuccessBrush}" VerticalAlignment="Center"/>
+                <TextBlock ToolTipService.ToolTip="{x:Bind Time}" Grid.Column="1" Text="{x:Bind Time}" VerticalAlignment="Center"/>
+                <TextBlock ToolTipService.ToolTip="{x:Bind LogText, Converter={StaticResource EmptyStringConverter}}" Grid.Column="2" Text="{x:Bind LogText, Converter={StaticResource EmptyStringConverter}}" Foreground="{ThemeResource SystemFillColorSuccessBrush}" VerticalAlignment="Center" TextWrapping="Wrap"/>
+            </Grid>
+        </DataTemplate>
+        <DataTemplate x:Key="InfoDataTemplate" x:DataType="log:XFELogEntry">
+            <Grid ColumnSpacing="16" Margin="0,4">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="80"/>
+                    <ColumnDefinition Width="150"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock ToolTipService.ToolTip="消息" Text="INFO" VerticalAlignment="Center"/>
+                <TextBlock ToolTipService.ToolTip="{x:Bind Time}" Grid.Column="1" Text="{x:Bind Time}" VerticalAlignment="Center"/>
+                <TextBlock ToolTipService.ToolTip="{x:Bind LogText, Converter={StaticResource EmptyStringConverter}}" Grid.Column="2" Text="{x:Bind LogText, Converter={StaticResource EmptyStringConverter}}" VerticalAlignment="Center"/>
+            </Grid>
+        </DataTemplate>
+        <DataTemplate x:Key="WarningDataTemplate" x:DataType="log:XFELogEntry">
+            <Grid ColumnSpacing="16" Margin="0,4">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="80"/>
+                    <ColumnDefinition Width="150"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock ToolTipService.ToolTip="警告" Text="WARN" Foreground="{ThemeResource SystemFillColorCautionBrush}" VerticalAlignment="Center"/>
+                <TextBlock ToolTipService.ToolTip="{x:Bind Time}" Grid.Column="1" Text="{x:Bind Time}" VerticalAlignment="Center"/>
+                <TextBlock ToolTipService.ToolTip="{x:Bind LogText, Converter={StaticResource EmptyStringConverter}}" Grid.Column="2" Text="{x:Bind LogText, Converter={StaticResource EmptyStringConverter}}" Foreground="{ThemeResource SystemFillColorCautionBrush}" VerticalAlignment="Center"/>
+            </Grid>
+        </DataTemplate>
+        <DataTemplate x:Key="ErrorDataTemplate" x:DataType="log:XFELogEntry">
+            <Grid ColumnSpacing="16" Margin="0,4">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="80"/>
+                    <ColumnDefinition Width="150"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock ToolTipService.ToolTip="错误" Text="ERROR" Foreground="{ThemeResource SystemFillColorCriticalBrush}" VerticalAlignment="Center"/>
+                <TextBlock ToolTipService.ToolTip="{x:Bind Time}" Grid.Column="1" Text="{x:Bind Time}" VerticalAlignment="Center"/>
+                <TextBlock ToolTipService.ToolTip="{x:Bind LogText, Converter={StaticResource EmptyStringConverter}}" Grid.Column="2" Text="{x:Bind LogText, Converter={StaticResource EmptyStringConverter}}" Foreground="{ThemeResource SystemFillColorCriticalBrush}" VerticalAlignment="Center"/>
+            </Grid>
+        </DataTemplate>
+        <DataTemplate x:Key="FatalDataTemplate" x:DataType="log:XFELogEntry">
+            <Grid ColumnSpacing="16" Margin="0,4" Background="{ThemeResource SystemFillColorCriticalBackgroundBrush}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="80"/>
+                    <ColumnDefinition Width="150"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock ToolTipService.ToolTip="致命错误" Text="FATAL" Foreground="{ThemeResource SystemFillColorCriticalBrush}" VerticalAlignment="Center"/>
+                <TextBlock ToolTipService.ToolTip="{x:Bind Time}" Grid.Column="1" Text="{x:Bind Time}" VerticalAlignment="Center"/>
+                <TextBlock ToolTipService.ToolTip="{x:Bind LogText, Converter={StaticResource EmptyStringConverter}}" Grid.Column="2" Text="{x:Bind LogText, Converter={StaticResource EmptyStringConverter}}" Foreground="{ThemeResource SystemFillColorCriticalBrush}" VerticalAlignment="Center"/>
+            </Grid>
+        </DataTemplate>
+        <selector:LogItemTemplateSelector x:Key="LogItemTemplateSelector" DebugTemplate="{StaticResource DebugDataTemplate}" TraceTemplate="{StaticResource TraceDataTemplate}" InfoTemplate="{StaticResource InfoDataTemplate}" WarningTemplate="{StaticResource WarningDataTemplate}" ErrorTemplate="{StaticResource ErrorDataTemplate}" FatalTemplate="{StaticResource FatalDataTemplate}"/>
+    </Page.Resources>
+
+
+    <Grid RowSpacing="10">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition/>
+        </Grid.RowDefinitions>
+        <StackPanel Orientation="Horizontal" Spacing="10">
+            <AutoSuggestBox HorizontalAlignment="Left" Width="250" QueryIcon="Find" PlaceholderText="搜索时间/日志级别/消息等" Text="{x:Bind ViewModel.SearchText, Mode=TwoWay}"/>
+            <Button Command="{x:Bind ViewModel.RefreshCommand}">
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                    <FontIcon Glyph="&#xE72C;"/>
+                    <TextBlock Text="刷新列表"/>
+                </StackPanel>
+            </Button>
+        </StackPanel>
+        <CommandBar Grid.Row="1" DefaultLabelPosition="Right" HorizontalAlignment="Left">
+            <AppBarButton Label="选择日期" Icon="Calendar">
+                <AppBarButton.Flyout>
+                    <Flyout>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition/>
+                                <ColumnDefinition/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Orientation="Vertical" Spacing="10">
+                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                    <TextBlock Text="起始日期"/>
+                                    <ToggleSwitch x:Name="startTimeSwitch" IsOn="{x:Bind ViewModel.IsStartDateTimeEnable, Mode=TwoWay}"/>
+                                </StackPanel>
+                                <CalendarDatePicker Date="{x:Bind ViewModel.StartDateTime, Mode=TwoWay,Converter={StaticResource DateTimeOffsetConverter}}" IsEnabled="{Binding ElementName=startTimeSwitch, Path=IsOn}"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Vertical" Spacing="10">
+                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                    <TextBlock Text="结束日期"/>
+                                    <ToggleSwitch x:Name="endTimeSwitch" IsOn="{x:Bind ViewModel.IsEndDateTimeEnable, Mode=TwoWay}"/>
+                                </StackPanel>
+                                <CalendarDatePicker Date="{x:Bind ViewModel.EndDateTime, Mode=TwoWay,Converter={StaticResource DateTimeOffsetConverter}}" IsEnabled="{Binding ElementName=endTimeSwitch, Path=IsOn}"/>
+                            </StackPanel>
+                        </Grid>
+                    </Flyout>
+                </AppBarButton.Flyout>
+            </AppBarButton>
+            <AppBarButton Label="导出日志" Command="{x:Bind ViewModel.ExportLogCommand}">
+                <AppBarButton.Icon>
+                    <FontIcon Glyph="&#xEDE1;"/>
+                </AppBarButton.Icon>
+            </AppBarButton>
+            <AppBarSeparator/>
+            <AppBarButton Label="清空日志" Icon="Delete">
+                <AppBarButton.Flyout>
+                    <Flyout>
+                        <StackPanel Orientation="Vertical" Spacing="10" MaxWidth="200">
+                            <TextBlock Text="是否清空软件的全部日志信息？（请确保你已在本地备份好需要的日志！）" TextWrapping="Wrap"/>
+                            <Button HorizontalAlignment="Center" Content="确定" Command="{x:Bind ViewModel.ClearLogCommand}"/>
+                        </StackPanel>
+                    </Flyout>
+                </AppBarButton.Flyout>
+            </AppBarButton>
+        </CommandBar>
+        <ListView Grid.Row="2" ItemsSource="{x:Bind ViewModel.ViewList}" ItemTemplateSelector="{StaticResource LogItemTemplateSelector}">
+            <ListView.Header>
+                <Grid Padding="16,12" ColumnSpacing="16">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="80"/>
+                        <ColumnDefinition Width="150"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="日志级别"/>
+                    <TextBlock Grid.Column="1" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="记录时间"/>
+                    <TextBlock Grid.Column="2" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="日志内容"/>
+                </Grid>
+            </ListView.Header>
+            <ListView.ItemContainerStyle>
+                <Style BasedOn="{StaticResource DefaultListViewItemStyle}" TargetType="ListViewItem">
+                    <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                </Style>
+            </ListView.ItemContainerStyle>
+        </ListView>
+    </Grid>
+</Page>
