@@ -1,12 +1,11 @@
-﻿using HaloPixelToolBox.Interface.Services;
+﻿using HaloPixelToolBox.Backend.Interface.Services;
 
-namespace HaloPixelToolBox.Implements.Services
+namespace HaloPixelToolBox.Backend.Implements.Services;
+
+public class MyService : IMyService
 {
-    public class MyService : IMyService
+    public void Initialize(UIElement uIElement)
     {
-        public void Initialize(UIElement uIElement)
-        {
-            throw new NotImplementedException();
-        }
+        throw new NotImplementedException();
     }
 }

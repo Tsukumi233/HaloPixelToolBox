@@ -12,7 +12,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\HaloPixelToolBox.Core\HaloPixelToolBox.Core.csproj" />
+    <ProjectReference Include="..\HaloPixelToolBox.Backend.Core\HaloPixelToolBox.Backend.Core.csproj" />
   </ItemGroup>
-
 </Project>

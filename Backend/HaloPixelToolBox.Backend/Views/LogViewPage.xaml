@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Page
-    x:Class="HaloPixelToolBox.Views.LogViewPage"
+    x:Class="HaloPixelToolBox.Backend.Views.LogViewPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -8,6 +8,7 @@
     xmlns:converter="using:XFEExtension.NetCore.WinUIHelper.Utilities.Converter"
     xmlns:log="using:XFEExtension.NetCore.XFEConsole"
     xmlns:selector="using:HaloPixelToolBox.Utilities.Selector"
+    xmlns:selector1="using:HaloPixelToolBox.Backend.Utilities.Selector"
     mc:Ignorable="d">
     <Page.Resources>
         <converter:EmptyStringConverter x:Key="EmptyStringConverter"/>
@@ -84,7 +85,7 @@
                 <TextBlock ToolTipService.ToolTip="{x:Bind LogText, Converter={StaticResource EmptyStringConverter}}" Grid.Column="2" Text="{x:Bind LogText, Converter={StaticResource EmptyStringConverter}}" Foreground="{ThemeResource SystemFillColorCriticalBrush}" VerticalAlignment="Center"/>
             </Grid>
         </DataTemplate>
-        <selector:LogItemTemplateSelector x:Key="LogItemTemplateSelector" DebugTemplate="{StaticResource DebugDataTemplate}" TraceTemplate="{StaticResource TraceDataTemplate}" InfoTemplate="{StaticResource InfoDataTemplate}" WarningTemplate="{StaticResource WarningDataTemplate}" ErrorTemplate="{StaticResource ErrorDataTemplate}" FatalTemplate="{StaticResource FatalDataTemplate}"/>
+        <selector1:LogItemTemplateSelector x:Key="LogItemTemplateSelector" DebugTemplate="{StaticResource DebugDataTemplate}" TraceTemplate="{StaticResource TraceDataTemplate}" InfoTemplate="{StaticResource InfoDataTemplate}" WarningTemplate="{StaticResource WarningDataTemplate}" ErrorTemplate="{StaticResource ErrorDataTemplate}" FatalTemplate="{StaticResource FatalDataTemplate}"/>
     </Page.Resources>
 
 

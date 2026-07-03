@@ -1,7 +1,6 @@
-﻿namespace HaloPixelToolBox.Client.Core
-{
-    public class Class1
-    {
+﻿namespace HaloPixelToolBox.Client.Core;
 
-    }
+public class Class1
+{
+
 }

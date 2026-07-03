@@ -1,9 +1,8 @@
 ﻿using HaloPixelToolBox.Installer.Views.Windows;
 
-namespace HaloPixelToolBox.Installer.Model
+namespace HaloPixelToolBox.Installer.Model;
+
+public interface IPopupPage
 {
-    public interface IPopupPage
-    {
-        public PopupWindow? PopupWindow { get; set; }
-    }
+    public PopupWindow? PopupWindow { get; set; }
 }

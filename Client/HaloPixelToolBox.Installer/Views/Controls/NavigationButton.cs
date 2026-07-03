@@ -1,11 +1,10 @@
 ﻿using System.Windows.Controls;
 
-namespace HaloPixelToolBox.Installer.Views.Controls
+namespace HaloPixelToolBox.Installer.Views.Controls;
+
+public class NavigationButton : RadioButton
 {
-    public class NavigationButton : RadioButton
+    public NavigationButton()
     {
-        public NavigationButton()
-        {
-        }
     }
 }

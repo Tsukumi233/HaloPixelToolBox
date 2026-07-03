@@ -5,22 +5,21 @@ using HaloPixelToolBox.Installer.Views.Pages;
 using System.Diagnostics;
 using System.IO;
 
-namespace HaloPixelToolBox.Installer.ViewModel.Pages
-{
-    public partial class InstallProgressPageViewModel(InstallProgressPage viewPage) : ViewModelBase
-    {
-        public InstallProgressPage ViewPage { get; set; } = viewPage;
+namespace HaloPixelToolBox.Installer.ViewModel.Pages;
 
-        [RelayCommand]
-        void ConfirmSuccess()
+public partial class InstallProgressPageViewModel(InstallProgressPage viewPage) : ViewModelBase
+{
+    public InstallProgressPage ViewPage { get; set; } = viewPage;
+
+    [RelayCommand]
+    void ConfirmSuccess()
+    {
+        var startInfo = new ProcessStartInfo(Path.Combine(SystemProfile.InstallPath, "HaloPixelToolBox.Client.exe"))
         {
-            var startInfo = new ProcessStartInfo(Path.Combine(SystemProfile.InstallPath, "HaloPixelToolBox.Client.exe"))
-            {
-                UseShellExecute = true,
-                WorkingDirectory = SystemProfile.InstallPath
-            };
-            Process.Start(startInfo);
-            MainWindowViewModel.CloseWindow();
-        }
+            UseShellExecute = true,
+            WorkingDirectory = SystemProfile.InstallPath
+        };
+        Process.Start(startInfo);
+        MainWindowViewModel.CloseWindow();
     }
 }

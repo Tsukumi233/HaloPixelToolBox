@@ -1,9 +1,9 @@
 {
   "profiles": {
-    "HaloPixelToolBox (Package)": {
+    "HaloPixelToolBox.Backend (Package)": {
       "commandName": "MsixPackage"
     },
-    "HaloPixelToolBox (Unpackaged)": {
+    "HaloPixelToolBox.Backend (Unpackaged)": {
       "commandName": "Project"
     }
   }

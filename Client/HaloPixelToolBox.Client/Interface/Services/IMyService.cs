@@ -1,7 +1,6 @@
-﻿namespace HaloPixelToolBox.Client.Interface.Services
+﻿namespace HaloPixelToolBox.Client.Interface.Services;
+
+public interface IMyService
 {
-    public interface IMyService
-    {
-        public void Initialize(UIElement uIElement);
-    }
+    public void Initialize(UIElement uIElement);
 }
