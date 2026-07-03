@@ -1,16 +1,15 @@
-﻿using XFEExtension.NetCore.AutoConfig;
+﻿using HaloPixelToolBox.Core.Models.Bar;
+using XFEExtension.NetCore.AutoConfig;
 using XFEExtension.NetCore.WinUIHelper.Utilities.Helper;
 
-namespace HaloPixelToolBox.Profiles.CacheProfiles
-{
-    public partial class CacheProfile : XFEProfile
-    {
-        public CacheProfile() => ProfilePath = $@"{AppPathHelper.CacheProfile}\{nameof(CacheProfile)}";
+namespace HaloPixelToolBox.Profiles.CacheProfiles;
 
-        /// <summary>
-        /// 你的缓存内容
-        /// </summary>
-        [ProfileProperty]
-        private string cacheContent = string.Empty;
-    }
+public partial class CacheProfile : XFEProfile
+{
+    public CacheProfile() => ProfilePath = $@"{AppPathHelper.CacheProfile}\{nameof(CacheProfile)}";
+
+    [ProfileProperty]
+    [ProfilePropertyAddGet("Current.versionAddress.CurrentProfile = Current")]
+    [ProfilePropertyAddGet("return Current.versionAddress")]
+    private ProfileDictionary<string, AddressResolverModel> versionAddress = [];
 }

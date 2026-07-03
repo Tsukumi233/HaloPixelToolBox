@@ -20,6 +20,7 @@ var server = XFEServerBuilder.CreateBuilder()
                                                                     options.LoginResultConvertFunction = static user => MyUserFaceInfo.FromUser((IUserInfo)user);
                                                                 })
                                                                 .AddService<AddressResolverService>()
+                                                                .AddParameter("EditAddressPermission", (int)UserRole.管理员)
                                                                 .Build(options =>
                                                                 {
                                                                     options.ServerCoreName = "HaloPixelToolBoxServer";
