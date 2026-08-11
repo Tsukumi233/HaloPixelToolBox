@@ -1,4 +1,4 @@
-﻿using XFEExtension.NetCore.AutoConfig;
+using XFEExtension.NetCore.AutoConfig;
 using XFEExtension.NetCore.WinUIHelper.Utilities.Helper;
 
 namespace HaloPixelToolBox.Client.Profiles.CrossVersionProfiles;
@@ -42,6 +42,12 @@ public partial class SystemProfile : XFEProfile
     /// </summary>
     [ProfileProperty]
     private string serverAddress = HaloPixelToolBox.Core.Utilities.DataManager.DefaultRequestAddress;
+
+    /// <summary>
+    /// 默认启动页面
+    /// </summary>
+    [ProfileProperty]
+    private string defaultPage = "CloudMusicLyricsToolPage";
 
     static partial void SetThemeProperty(ref ElementTheme value) => AppThemeHelper.ChangeTheme(value);
 }

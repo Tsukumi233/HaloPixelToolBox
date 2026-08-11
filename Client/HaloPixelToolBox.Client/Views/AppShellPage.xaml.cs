@@ -22,7 +22,10 @@ public sealed partial class AppShellPage : Page
         ViewModel.DialogService.RegisterDialog(closeDialog);
         ViewModel.PageService.Initialize(this);
         ViewModel.LoadingService.Initialize(loadingGrid, globalLoadingGrid, globalLoadingTextBlock, DispatcherQueue, ViewModel.NavigationViewService.NavigationService);
-        ViewModel.NavigationViewService.NavigateTo<CloudMusicLyricsToolPage>();
+        if (SystemProfile.DefaultPage == "SpotifyLyricsToolPage")
+            ViewModel.NavigationViewService.NavigateTo<SpotifyLyricsToolPage>();
+        else
+            ViewModel.NavigationViewService.NavigateTo<CloudMusicLyricsToolPage>();
     }
 
     private void NavigationView_DisplayModeChanged(NavigationView sender, NavigationViewDisplayModeChangedEventArgs args)

@@ -20,6 +20,11 @@ public partial class CloudMusicLyricsToolPageViewModel : ServiceBaseViewModelBas
     [ObservableProperty] public partial bool UseInputedAddress { get; set; } = CloudMusicLyricsProfile.UseInputedAddress;
     [ObservableProperty] public partial string InputedAddress { get; set; } = CloudMusicLyricsProfile.InputedAddress;
     [ObservableProperty] public partial int SwitchBackTimeout { get; set; } = CloudMusicLyricsProfile.SwitchBackTimeout;
+    [ObservableProperty] public partial bool EnableScreenColorSync { get; set; } = CloudMusicLyricsProfile.EnableScreenColorSync;
+    [ObservableProperty] public partial bool EnableAmbientColorSync { get; set; } = CloudMusicLyricsProfile.EnableAmbientColorSync;
+    [ObservableProperty] public partial Core.Models.Lighting.AmbientLightEffect SyncAmbientLightEffect { get; set; } = CloudMusicLyricsProfile.SyncAmbientLightEffect;
+    [ObservableProperty] public partial Core.Models.Lighting.AmbientLightBrightness SyncAmbientLightBrightness { get; set; } = CloudMusicLyricsProfile.SyncAmbientLightBrightness;
+    [ObservableProperty] public partial int SyncAmbientLightSpeed { get; set; } = CloudMusicLyricsProfile.SyncAmbientLightSpeed;
     [ObservableProperty] public partial string CloudMusicVersion { get; set; } = string.Empty;
     [ObservableProperty] public partial string SupportedVersion { get; set; } = "等待检测";
     public HaloPixelDevice Device { get; set; } = new();
@@ -49,7 +54,68 @@ public partial class CloudMusicLyricsToolPageViewModel : ServiceBaseViewModelBas
         }
     }
 
-    partial void OnEnableCloudMusicLyricsChanged(bool value) => CloudMusicLyricsProfile.EnableCloudMusicLyrics = value;
+    private bool _forceRefresh;
+    private bool _forcePauseLightRefresh;
+    private bool _forcePauseScreenRefresh;
+    private bool _forcePauseUIModelRefresh;
+    private bool _isClockUI;
+
+    public void OnNavigatedTo()
+    {
+        _forceRefresh = true;
+    }
+
+    public static (byte R, byte G, byte B) ParseHexColor(string hex)
+    {
+        try
+        {
+            if (hex.StartsWith("#"))
+                hex = hex.Substring(1);
+            if (hex.Length == 6)
+            {
+                byte r = Convert.ToByte(hex.Substring(0, 2), 16);
+                byte g = Convert.ToByte(hex.Substring(2, 2), 16);
+                byte b = Convert.ToByte(hex.Substring(4, 2), 16);
+                return (r, g, b);
+            }
+        }
+        catch { }
+        return (0xf0, 0xb4, 0xc8); // default fallback color
+    }
+
+    public void ForcePauseLightRefresh()
+    {
+        if (_isClockUI)
+        {
+            _forcePauseLightRefresh = true;
+            Console.WriteLine("[DEBUG] NetEase ForcePauseLightRefresh invoked");
+        }
+    }
+
+    public void ForcePauseScreenRefresh()
+    {
+        if (_isClockUI)
+        {
+            _forcePauseScreenRefresh = true;
+            Console.WriteLine("[DEBUG] NetEase ForcePauseScreenRefresh invoked");
+        }
+    }
+
+    public void ForcePauseUIModelRefresh()
+    {
+        if (_isClockUI)
+        {
+            _forcePauseUIModelRefresh = true;
+            Console.WriteLine("[DEBUG] NetEase ForcePauseUIModelRefresh invoked");
+        }
+    }
+
+    partial void OnEnableCloudMusicLyricsChanged(bool value)
+    {
+        CloudMusicLyricsProfile.EnableCloudMusicLyrics = value;
+        if (value)
+            _forceRefresh = true;
+    }
 
     partial void OnUseInputedAddressChanged(bool value)
     {
@@ -64,11 +130,136 @@ public partial class CloudMusicLyricsToolPageViewModel : ServiceBaseViewModelBas
     }
 
     partial void OnSwitchBackWhenPauseChanged(bool value) => CloudMusicLyricsProfile.SwitchBackWhenPause = value;
-
     partial void OnSwitchBackTimeoutChanged(int value) => CloudMusicLyricsProfile.SwitchBackTimeout = value;
+
+    partial void OnEnableScreenColorSyncChanged(bool value)
+    {
+        CloudMusicLyricsProfile.EnableScreenColorSync = value;
+        if (!_isClockUI)
+            _forceRefresh = true;
+    }
+
+    partial void OnEnableAmbientColorSyncChanged(bool value)
+    {
+        CloudMusicLyricsProfile.EnableAmbientColorSync = value;
+        if (!_isClockUI)
+            _forceRefresh = true;
+    }
+
+    partial void OnSyncAmbientLightEffectChanged(Core.Models.Lighting.AmbientLightEffect value)
+    {
+        CloudMusicLyricsProfile.SyncAmbientLightEffect = value;
+        if (!_isClockUI)
+            _forceRefresh = true;
+    }
+
+    partial void OnSyncAmbientLightBrightnessChanged(Core.Models.Lighting.AmbientLightBrightness value)
+    {
+        CloudMusicLyricsProfile.SyncAmbientLightBrightness = value;
+        if (!_isClockUI)
+            _forceRefresh = true;
+    }
+
+    partial void OnSyncAmbientLightSpeedChanged(int value)
+    {
+        CloudMusicLyricsProfile.SyncAmbientLightSpeed = value;
+        if (!_isClockUI)
+            _forceRefresh = true;
+    }
+
+    private Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager? _smtcManager;
+    private Windows.Media.Control.GlobalSystemMediaTransportControlsSession? _cloudMusicSession;
+    public (byte R, byte G, byte B)? CurrentAlbumColor { get; private set; }
+    private string _currentTitle = string.Empty;
+    private string _currentArtist = string.Empty;
+
+    public bool IsPlaying
+    {
+        get
+        {
+            if (_cloudMusicSession == null) return false;
+            try
+            {
+                var playbackInfo = _cloudMusicSession.GetPlaybackInfo();
+                return playbackInfo?.PlaybackStatus == Windows.Media.Control.GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing;
+            }
+            catch {}
+            return false;
+        }
+    }
+
+    public string CurrentTitle => _currentTitle;
+    public string CurrentArtist => _currentArtist;
+
+    private async Task InitSmtcAsync()
+    {
+        try
+        {
+            _smtcManager = await Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager.RequestAsync();
+            UpdateCloudMusicSession();
+            _smtcManager.SessionsChanged += (s, e) => UpdateCloudMusicSession();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"SMTC init failed: {ex.Message}");
+        }
+    }
+
+    private void UpdateCloudMusicSession()
+    {
+        if (_smtcManager == null) return;
+        var sessions = _smtcManager.GetSessions();
+        var targetSession = sessions.FirstOrDefault(x => x.SourceAppUserModelId.Contains("cloudmusic", StringComparison.OrdinalIgnoreCase));
+        if (targetSession != _cloudMusicSession)
+        {
+            if (_cloudMusicSession != null)
+            {
+                _cloudMusicSession.MediaPropertiesChanged -= OnSmtcMediaPropertiesChanged;
+            }
+            _cloudMusicSession = targetSession;
+            if (_cloudMusicSession != null)
+            {
+                _cloudMusicSession.MediaPropertiesChanged += OnSmtcMediaPropertiesChanged;
+                _ = UpdateAlbumColorAsync();
+            }
+        }
+    }
+
+    private void OnSmtcMediaPropertiesChanged(Windows.Media.Control.GlobalSystemMediaTransportControlsSession sender, Windows.Media.Control.MediaPropertiesChangedEventArgs args)
+    {
+        _ = UpdateAlbumColorAsync();
+    }
+
+    private async Task UpdateAlbumColorAsync()
+    {
+        if (_cloudMusicSession == null) return;
+        try
+        {
+            var media = await _cloudMusicSession.TryGetMediaPropertiesAsync();
+            if (media != null)
+            {
+                _currentTitle = media.Title ?? string.Empty;
+                _currentArtist = media.Artist ?? string.Empty;
+                if (media.Thumbnail != null)
+                {
+                    var color = await SpotifyLyricsReader.GetDominantColorAsync(media.Thumbnail);
+                    if (color.HasValue)
+                    {
+                        CurrentAlbumColor = color.Value;
+                        Console.WriteLine($"CloudMusic extracted album color: RGB({color.Value.R}, {color.Value.G}, {color.Value.B})");
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to update CloudMusic album color: {ex.Message}");
+        }
+    }
 
     public CloudMusicLyricsToolPageViewModel()
     {
+        _ = InitSmtcAsync();
         Console.WriteLine("初始化网易云歌词读取器");
         AddressResolverProvider.LoadCachedResolvers();
         SupportedVersion = CloudMusicLyricsReader.VersionResolverDictionary.Keys
@@ -151,7 +342,7 @@ public partial class CloudMusicLyricsToolPageViewModel : ServiceBaseViewModelBas
             Console.WriteLine("等待花再设备...");
             while (!DeviceReady)
                 await Task.Delay(500);
-            if (DeviceReady)
+            if (DeviceReady && EnableCloudMusicLyrics)
             {
                 Console.WriteLine("花再设备已就绪，显示启动信息");
                 Device.SetTextLayout(HaloPixelTextLayout.Center);
@@ -161,7 +352,7 @@ public partial class CloudMusicLyricsToolPageViewModel : ServiceBaseViewModelBas
             }
             while (true)
             {
-                var isClockUI = false;
+                _isClockUI = false;
                 var time = 0;
                 try
                 {
@@ -169,29 +360,113 @@ public partial class CloudMusicLyricsToolPageViewModel : ServiceBaseViewModelBas
                     {
                         Console.WriteLine("[DEBUG]设备均在线，准备进入主循环");
                         var lastRead = string.Empty;
+                        var lastTrackTitle = string.Empty;
+                        var lastTrackArtist = string.Empty;
                         var scrolled = false;
+                        var wasPlaying = false;
+                        (byte R, byte G, byte B) lastScreenColor = (0, 0, 0);
+                        (byte R, byte G, byte B) lastAmbientColor = (0, 0, 0);
                         while (true)
                         {
                             try
                             {
                                 if (!DeviceReady || !CloudMusicReady || !EnableCloudMusicLyrics)
                                     break;
-                                if (Reader.TryReadLyrics(out var lyrics) && lastRead != lyrics)
+
+                                bool isPlaying = IsPlaying;
+                                bool trackChanged = lastTrackTitle != CurrentTitle || lastTrackArtist != CurrentArtist;
+                                bool lyricsChanged = Reader.TryReadLyrics(out var lyrics) && lastRead != lyrics;
+
+                                if (isPlaying && (_isClockUI || trackChanged))
                                 {
-                                    Console.WriteLine($"已读取到歌词：{lyrics}");
-                                    lastRead = lyrics;
-                                    isClockUI = false;
-                                    time = 0;
-                                    if (scrolled)
+                                    if (!wasPlaying && isPlaying)
                                     {
-                                        Device.ShowText(string.Empty);
-                                        await Task.Delay(100);
-                                        scrolled = false;
+                                        _isClockUI = false;
+                                        _forceRefresh = true;
+                                        time = 0;
                                     }
+                                    else if (lyricsChanged || trackChanged)
+                                    {
+                                        _isClockUI = false;
+                                        _forceRefresh = true;
+                                        time = 0;
+                                    }
+                                }
+                                wasPlaying = isPlaying;
+                                lastTrackTitle = CurrentTitle ?? string.Empty;
+                                lastTrackArtist = CurrentArtist ?? string.Empty;
+
+                                var albumColor = CurrentAlbumColor;
+
+                                // 1. Determine screen text color
+                                (byte R, byte G, byte B) screenColor = ((byte)0xf0, (byte)0xb4, (byte)0xc8);
+                                if (EnableScreenColorSync && albumColor.HasValue)
+                                {
+                                    screenColor = albumColor.Value;
+                                }
+
+                                // 2. Determine ambient backlight color
+                                (byte R, byte G, byte B) ambientColor = ((byte)0xf0, (byte)0xb4, (byte)0xc8);
+                                if (EnableAmbientColorSync && albumColor.HasValue)
+                                {
+                                    ambientColor = albumColor.Value;
+                                }
+
+                                bool colorChanged = lastScreenColor != screenColor || lastAmbientColor != ambientColor;
+
+                                if (!_isClockUI && (lyricsChanged || colorChanged || _forceRefresh))
+                                {
+                                    _forceRefresh = false;
+                                    lastScreenColor = screenColor;
+                                    lastAmbientColor = ambientColor;
+                                    HidPacketBuilder.CurrentColor = screenColor;
+
+                                    try
+                                    {
+                                        Device.SetAmbientLight(new Core.Models.Lighting.AmbientLightOptions
+                                        {
+                                            Effect = Core.Models.Lighting.AmbientLightEffect.Static,
+                                            Color = new Core.Models.Display.HaloPixelColor(ambientColor.R, ambientColor.G, ambientColor.B),
+                                            Brightness = Core.Models.Lighting.AmbientLightBrightness.High,
+                                            Speed = 5
+                                        });
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        Console.WriteLine($"[ERROR] SetAmbientLight failed: {ex.Message}");
+                                    }
+
+                                    try
+                                    {
+                                        Device.SetPixelScreenColor(new Core.Models.Display.HaloPixelColor(screenColor.R, screenColor.G, screenColor.B));
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        Console.WriteLine($"[ERROR] SetPixelScreenColor failed: {ex.Message}");
+                                    }
+
+                                    if (lyricsChanged)
+                                    {
+                                        Console.WriteLine($"已读取到歌词：{lyrics}");
+                                        lastRead = lyrics;
+                                        if (_isClockUI)
+                                        {
+                                            _isClockUI = false;
+                                            _forceRefresh = true;
+                                        }
+                                        time = 0;
+                                        if (scrolled)
+                                        {
+                                            Device.ShowText(string.Empty);
+                                            await Task.Delay(100);
+                                            scrolled = false;
+                                        }
+                                    }
+
                                     Device.SetTextLayout(CloudMusicLyricsProfile.DefaultHaloPixelTextLayout);
-                                    Device.ShowText(lyrics);
-                                    Debug.WriteLine(lyrics.DisplayLength());
-                                    if (lyrics.DisplayLength() > 30)
+                                    Device.ShowText(lastRead);
+
+                                    if (lyricsChanged && lastRead.DisplayLength() > 30)
                                     {
                                         scrolled = true;
                                         await Task.Delay(500);
@@ -199,12 +474,70 @@ public partial class CloudMusicLyricsToolPageViewModel : ServiceBaseViewModelBas
                                     }
                                 }
                                 await Task.Delay(50);
-                                time += 50;
-                                if (!isClockUI && time >= CloudMusicLyricsProfile.SwitchBackTimeout * 1000)
+                                time = isPlaying ? 0 : time + 50;
+                                if (SwitchBackWhenPause && !isPlaying && !_isClockUI && time >= CloudMusicLyricsProfile.SwitchBackTimeout * 1000)
                                 {
-                                    isClockUI = true;
+                                    _isClockUI = true;
+                                    (byte R, byte G, byte B) finalScreenColor = ParseHexColor(CloudMusicLyricsProfile.DefaultScreenColor);
+                                    (byte R, byte G, byte B) finalAmbientColor = ParseHexColor(CloudMusicLyricsProfile.DefaultAmbientLightColor);
+                                    HidPacketBuilder.CurrentColor = finalScreenColor;
+                                    try
+                                    {
+                                        Device.SetAmbientLight(new Core.Models.Lighting.AmbientLightOptions
+                                        {
+                                            Effect = CloudMusicLyricsProfile.DefaultAmbientLightEffect,
+                                            Color = new Core.Models.Display.HaloPixelColor(finalAmbientColor.R, finalAmbientColor.G, finalAmbientColor.B),
+                                            Brightness = CloudMusicLyricsProfile.DefaultAmbientLightBrightness,
+                                            Speed = (byte)CloudMusicLyricsProfile.DefaultAmbientLightSpeed
+                                        });
+                                    }
+                                    catch {}
+                                    try
+                                    {
+                                        Device.SetPixelScreenColor(new Core.Models.Display.HaloPixelColor(finalScreenColor.R, finalScreenColor.G, finalScreenColor.B));
+                                    }
+                                    catch {}
                                     Device.SetUIModel(CloudMusicLyricsProfile.DefaultHaloPixelUIModel);
                                     Console.WriteLine("已切换至时钟界面");
+                                }
+
+                                if (_isClockUI && _forcePauseLightRefresh)
+                                {
+                                    _forcePauseLightRefresh = false;
+                                    (byte R, byte G, byte B) finalAmbientColor = ParseHexColor(CloudMusicLyricsProfile.DefaultAmbientLightColor);
+                                    try
+                                    {
+                                        Device.SetAmbientLight(new Core.Models.Lighting.AmbientLightOptions
+                                        {
+                                            Effect = CloudMusicLyricsProfile.DefaultAmbientLightEffect,
+                                            Color = new Core.Models.Display.HaloPixelColor(finalAmbientColor.R, finalAmbientColor.G, finalAmbientColor.B),
+                                            Brightness = CloudMusicLyricsProfile.DefaultAmbientLightBrightness,
+                                            Speed = (byte)CloudMusicLyricsProfile.DefaultAmbientLightSpeed
+                                        });
+                                    }
+                                    catch {}
+                                }
+
+                                if (_isClockUI && _forcePauseScreenRefresh)
+                                {
+                                    _forcePauseScreenRefresh = false;
+                                    (byte R, byte G, byte B) finalScreenColor = ParseHexColor(CloudMusicLyricsProfile.DefaultScreenColor);
+                                    HidPacketBuilder.CurrentColor = finalScreenColor;
+                                    try
+                                    {
+                                        Device.SetPixelScreenColor(new Core.Models.Display.HaloPixelColor(finalScreenColor.R, finalScreenColor.G, finalScreenColor.B));
+                                    }
+                                    catch {}
+                                }
+
+                                if (_isClockUI && _forcePauseUIModelRefresh)
+                                {
+                                    _forcePauseUIModelRefresh = false;
+                                    try
+                                    {
+                                        Device.SetUIModel(CloudMusicLyricsProfile.DefaultHaloPixelUIModel);
+                                    }
+                                    catch {}
                                 }
                             }
                             catch (Exception ex)

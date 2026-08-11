@@ -8,16 +8,14 @@ using XFEExtension.NetCore.WinUIHelper.Utilities.Helper;
 
 namespace HaloPixelToolBox.Client.Views;
 
-/// <summary>
-/// 网易云歌词工具页面
-/// </summary>
-public sealed partial class CloudMusicLyricsToolPage : Page
+public sealed partial class SpotifyLyricsToolPage : Page
 {
-    public static CloudMusicLyricsToolPage? Current { get; set; }
-    public CloudMusicLyricsToolPageViewModel ViewModel { get; set; } = new();
-    public CloudMusicLyricsToolPage()
+    public static SpotifyLyricsToolPage? Current { get; set; }
+    public SpotifyLyricsToolPageViewModel ViewModel { get; set; } = new();
+
+    public SpotifyLyricsToolPage()
     {
-        Console.WriteLine("网易云歌词工具页面初始化中...");
+        Console.WriteLine("正在初始化Spotify歌词界面...");
         Current = this;
         InitializeComponent();
         ViewModel.AutoNavigationParameterService.Initialize(this);
@@ -50,7 +48,7 @@ public sealed partial class CloudMusicLyricsToolPage : Page
         }
 
         NavigationCacheMode = NavigationCacheMode.Enabled;
-        Console.WriteLine("网易云歌词工具页面初始化完成");
+        Console.WriteLine("Spotify歌词界面初始化完成");
     }
 
     private void OnBrightnessRadioChecked(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
@@ -65,7 +63,7 @@ public sealed partial class CloudMusicLyricsToolPage : Page
 
     protected override void OnNavigatedTo(NavigationEventArgs e)
     {
-        Console.WriteLine("导航到网易云歌词页面");
+        Console.WriteLine("导航到Spotify歌词页面");
         ViewModel.AutoNavigationParameterService.Initialize(this);
         ViewModel.AutoNavigationParameterService.OnParameterChange(e.Parameter);
         ViewModel.OnNavigatedTo();

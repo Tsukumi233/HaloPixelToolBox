@@ -1,4 +1,4 @@
-﻿using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using HaloPixelToolBox.Client.Interface.Services;
 using HaloPixelToolBox.Client.Profiles.CrossVersionProfiles;
@@ -18,6 +18,7 @@ namespace HaloPixelToolBox.Client.ViewModels;
 public partial class SettingPageViewModel : ViewModelBase
 {
     [ObservableProperty] public partial int CloseButtonActionIndex { get; set; } = SystemProfile.MinimizeWhenClose ? 0 : 1;
+    [ObservableProperty] public partial int DefaultTabPageIndex { get; set; } = SystemProfile.DefaultPage == "SpotifyLyricsToolPage" ? 1 : 0;
     [ObservableProperty] public partial bool IsAutoStartEnable { get; set; } = SystemProfile.AutoStart;
     [ObservableProperty] public partial bool MinimizeWhenOpen { get; set; } = SystemProfile.MinimizeWhenOpen;
     [ObservableProperty] public partial string AppCacheDirectory { get; set; } = AppPathHelper.AppCache;
@@ -33,6 +34,8 @@ public partial class SettingPageViewModel : ViewModelBase
     public IDialogService DialogService { get; set; } = ServiceManager.GetService<IDialogService>();
 
     partial void OnCloseButtonActionIndexChanged(int value) => SystemProfile.MinimizeWhenClose = value == 0;
+
+    partial void OnDefaultTabPageIndexChanged(int value) => SystemProfile.DefaultPage = value == 1 ? "SpotifyLyricsToolPage" : "CloudMusicLyricsToolPage";
 
     partial void OnIsAutoStartEnableChanged(bool value)
     {

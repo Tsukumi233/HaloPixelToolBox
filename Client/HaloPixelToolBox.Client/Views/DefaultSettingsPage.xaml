@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="HaloPixelToolBox.Client.Views.DefaultSettingsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:HaloPixelToolBox.Client.Views"
+    xmlns:controls="using:CommunityToolkit.WinUI.Controls"
+    xmlns:converter="using:XFEExtension.NetCore.WinUIHelper.Utilities.Converter"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+    <Page.Resources>
+        <Style x:Key="SettingsSectionHeaderTextBlockStyle"
+               BasedOn="{StaticResource BodyStrongTextBlockStyle}"
+               TargetType="TextBlock">
+            <Style.Setters>
+                <Setter Property="Margin" Value="1,15,0,6" />
+            </Style.Setters>
+        </Style>
+    </Page.Resources>
+
+    <Grid>
+        <ScrollView>
+            <StackPanel Orientation="Vertical" Spacing="4" Margin="0,0,0,20">
+                <TextBlock Text="默认界面设置" Style="{StaticResource SettingsSectionHeaderTextBlockStyle}"/>
+
+                <controls:SettingsCard Header="暂停后切换回默认界面" Description="在音乐暂停一段时间后，自动把花再设备切换回默认的时钟或页面">
+                    <controls:SettingsCard.HeaderIcon>
+                        <FontIcon Glyph="&#xE73B;"/>
+                    </controls:SettingsCard.HeaderIcon>
+                    <ToggleSwitch x:Name="switchBackWhenPauseToggleSwitch" IsOn="{x:Bind ViewModel.SwitchBackWhenPause, Mode=TwoWay}"/>
+                </controls:SettingsCard>
+
+                <controls:SettingsCard Header="等待时间" Description="音乐暂停后等待切换的时间（秒）" IsEnabled="{x:Bind switchBackWhenPauseToggleSwitch.IsOn, Mode=OneWay}">
+                    <controls:SettingsCard.HeaderIcon>
+                        <FontIcon Glyph="&#xE916;"/>
+                    </controls:SettingsCard.HeaderIcon>
+                    <NumberBox Value="{x:Bind ViewModel.SwitchBackTimeout, Mode=TwoWay}" Minimum="1" Maximum="3600" SpinButtonPlacementMode="Compact" Width="150"/>
+                </controls:SettingsCard>
+
+                <TextBlock Text="默认显示 &amp; 灯效" Style="{StaticResource SettingsSectionHeaderTextBlockStyle}"/>
+
+                <controls:SettingsCard Header="暂停像素屏界面" Description="暂停后切换回的默认界面模式" IsEnabled="{x:Bind switchBackWhenPauseToggleSwitch.IsOn, Mode=OneWay}">
+                    <controls:SettingsCard.HeaderIcon>
+                        <FontIcon Glyph="&#xE7F4;"/>
+                    </controls:SettingsCard.HeaderIcon>
+                    <ComboBox x:Name="defaultHaloPixelUIModelComboBox" Tag="HaloPixelToolBox.Client.Profiles.CrossVersionProfiles.SpotifyLyricsProfile.DefaultHaloPixelUIModel">
+                        <ComboBoxItem Content="时钟类" Tag="Clock"/>
+                        <ComboBoxItem Content="游戏类" Tag="Game"/>
+                        <ComboBoxItem Content="打工类" Tag="Work"/>
+                        <ComboBoxItem Content="读书类" Tag="Read"/>
+                        <ComboBoxItem Content="猫咪类" Tag="Cats"/>
+                        <ComboBoxItem Content="狗狗类" Tag="Dogs"/>
+                        <ComboBoxItem Content="热更类" Tag="Memes"/>
+                        <ComboBoxItem Content="赛博类" Tag="Cyber"/>
+                        <ComboBoxItem Content="频谱类" Tag="Waves"/>
+                    </ComboBox>
+                </controls:SettingsCard>
+
+                <controls:SettingsCard Header="暂停氛围灯效果" Description="设置暂停后切换回的氛围灯效果类型" IsEnabled="{x:Bind switchBackWhenPauseToggleSwitch.IsOn, Mode=OneWay}">
+                    <controls:SettingsCard.HeaderIcon>
+                        <FontIcon Glyph="&#xE706;"/>
+                    </controls:SettingsCard.HeaderIcon>
+                    <ComboBox x:Name="defaultAmbientLightEffectComboBox" Tag="HaloPixelToolBox.Client.Profiles.CrossVersionProfiles.SpotifyLyricsProfile.DefaultAmbientLightEffect">
+                        <ComboBoxItem Content="常亮" Tag="Static"/>
+                        <ComboBoxItem Content="呼吸" Tag="Breathing"/>
+                        <ComboBoxItem Content="渐变" Tag="ColorTide"/>
+                        <ComboBoxItem Content="流动" Tag="Flow"/>
+                        <ComboBoxItem Content="涟漪" Tag="Ripple"/>
+                        <ComboBoxItem Content="律动" Tag="Dynamic"/>
+                    </ComboBox>
+                </controls:SettingsCard>
+
+                <controls:SettingsCard Header="暂停氛围灯亮度" Description="设置暂停后切换回的氛围灯光亮度模式" IsEnabled="{x:Bind switchBackWhenPauseToggleSwitch.IsOn, Mode=OneWay}">
+                    <controls:SettingsCard.HeaderIcon>
+                        <FontIcon Glyph="&#xE706;"/>
+                    </controls:SettingsCard.HeaderIcon>
+                    <StackPanel Orientation="Horizontal" Spacing="15">
+                        <RadioButton x:Name="defaultBrightnessLowRadio" Content="低" GroupName="DefaultBrightnessSyncGroup" Checked="OnDefaultBrightnessRadioChecked"/>
+                        <RadioButton x:Name="defaultBrightnessMediumRadio" Content="中" GroupName="DefaultBrightnessSyncGroup" Checked="OnDefaultBrightnessRadioChecked"/>
+                        <RadioButton x:Name="defaultBrightnessHighRadio" Content="高" GroupName="DefaultBrightnessSyncGroup" Checked="OnDefaultBrightnessRadioChecked"/>
+                    </StackPanel>
+                </controls:SettingsCard>
+
+                <controls:SettingsCard Header="暂停氛围灯速度" Description="设置暂停后切换回的呼吸或动态灯效速度 (1-10)" IsEnabled="{x:Bind switchBackWhenPauseToggleSwitch.IsOn, Mode=OneWay}">
+                    <controls:SettingsCard.HeaderIcon>
+                        <FontIcon Glyph="&#xEC5A;"/>
+                    </controls:SettingsCard.HeaderIcon>
+                    <Slider Minimum="1" Maximum="10" StepFrequency="1" Width="150" Value="{x:Bind ViewModel.DefaultAmbientLightSpeed, Mode=TwoWay}"/>
+                </controls:SettingsCard>
+
+                <controls:SettingsCard Header="暂停氛围灯颜色" Description="设置暂停后切换回的氛围灯光颜色" IsEnabled="{x:Bind switchBackWhenPauseToggleSwitch.IsOn, Mode=OneWay}">
+                    <controls:SettingsCard.HeaderIcon>
+                        <FontIcon Glyph="&#xE790;"/>
+                    </controls:SettingsCard.HeaderIcon>
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Border x:Name="defaultAmbientColorIndicator" CornerRadius="4" Width="20" Height="20" BorderBrush="{ThemeResource SystemControlForegroundBaseMediumLowBrush}" BorderThickness="1"/>
+                        <DropDownButton Content="选择颜色">
+                            <DropDownButton.Flyout>
+                                <Flyout>
+                                    <ColorPicker x:Name="defaultAmbientColorPicker" IsColorChannelTextInputVisible="False" IsHexInputVisible="True" IsAlphaEnabled="False" IsAlphaSliderVisible="False" ColorChanged="OnDefaultAmbientColorChanged"/>
+                                </Flyout>
+                            </DropDownButton.Flyout>
+                        </DropDownButton>
+                    </StackPanel>
+                </controls:SettingsCard>
+
+                <controls:SettingsCard Header="暂停像素屏颜色" Description="设置暂停后时钟或默认界面的前景色" IsEnabled="{x:Bind switchBackWhenPauseToggleSwitch.IsOn, Mode=OneWay}">
+                    <controls:SettingsCard.HeaderIcon>
+                        <FontIcon Glyph="&#xE790;"/>
+                    </controls:SettingsCard.HeaderIcon>
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Border x:Name="defaultScreenColorIndicator" CornerRadius="4" Width="20" Height="20" BorderBrush="{ThemeResource SystemControlForegroundBaseMediumLowBrush}" BorderThickness="1"/>
+                        <DropDownButton Content="选择颜色">
+                            <DropDownButton.Flyout>
+                                <Flyout>
+                                    <ColorPicker x:Name="defaultScreenColorPicker" IsColorChannelTextInputVisible="False" IsHexInputVisible="True" IsAlphaEnabled="False" IsAlphaSliderVisible="False" ColorChanged="OnDefaultScreenColorChanged"/>
+                                </Flyout>
+                            </DropDownButton.Flyout>
+                        </DropDownButton>
+                    </StackPanel>
+                </controls:SettingsCard>
+            </StackPanel>
+        </ScrollView>
+    </Grid>
+</Page>

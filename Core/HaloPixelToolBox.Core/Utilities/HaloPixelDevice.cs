@@ -1,4 +1,6 @@
 ﻿using HaloPixelToolBox.Core.Models.Bar;
+using HaloPixelToolBox.Core.Models.Display;
+using HaloPixelToolBox.Core.Models.Lighting;
 using HidSharp;
 using XFEExtension.NetCore.StringExtension;
 
@@ -96,5 +98,26 @@ public partial class HaloPixelDevice
             }
             catch { }
         }
+    }
+
+    public void SetAmbientLight(AmbientLightOptions options)
+    {
+        using var stream = CurrentDevice?.Open();
+        stream?.Write(HidPacketBuilder.BuildAmbientLight(options));
+        stream?.Close();
+    }
+
+    public void SetAmbientLightEnabled(bool enabled)
+    {
+        using var stream = CurrentDevice?.Open();
+        stream?.Write(HidPacketBuilder.BuildAmbientLightPower(enabled));
+        stream?.Close();
+    }
+
+    public void SetPixelScreenColor(HaloPixelColor color)
+    {
+        using var stream = CurrentDevice?.Open();
+        stream?.Write(HidPacketBuilder.BuildPixelScreenColor(color));
+        stream?.Close();
     }
 }

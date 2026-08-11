@@ -35,6 +35,15 @@
                         <ComboBoxItem Content="跟随系统" Tag="Default"/>
                     </ComboBox>
                 </controls:SettingsCard>
+                <controls:SettingsCard Header="默认启动页面" Description="软件启动时默认显示的歌词源页面">
+                    <controls:SettingsCard.HeaderIcon>
+                        <FontIcon Glyph="&#xE8F4;"/>
+                    </controls:SettingsCard.HeaderIcon>
+                    <ComboBox SelectedIndex="{x:Bind ViewModel.DefaultTabPageIndex, Mode=TwoWay}">
+                        <ComboBoxItem Content="网易云歌词"/>
+                        <ComboBoxItem Content="Spotify歌词"/>
+                    </ComboBox>
+                </controls:SettingsCard>
                 <TextBlock Text="通用" Style="{StaticResource SettingsSectionHeaderTextBlockStyle}"/>
                 <controls:SettingsCard Header="解析地址服务器" Description="用于动态获取并缓存当前音乐客户端的内存解析地址">
                     <controls:SettingsCard.HeaderIcon>
