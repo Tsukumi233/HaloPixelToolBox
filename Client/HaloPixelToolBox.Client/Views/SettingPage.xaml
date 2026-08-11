@@ -36,6 +36,12 @@
                     </ComboBox>
                 </controls:SettingsCard>
                 <TextBlock Text="通用" Style="{StaticResource SettingsSectionHeaderTextBlockStyle}"/>
+                <controls:SettingsCard Header="解析地址服务器" Description="用于动态获取并缓存当前音乐客户端的内存解析地址">
+                    <controls:SettingsCard.HeaderIcon>
+                        <FontIcon Glyph="&#xE968;"/>
+                    </controls:SettingsCard.HeaderIcon>
+                    <TextBox MinWidth="360" Text="{x:Bind ViewModel.ServerAddress, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" PlaceholderText="http://localhost:3300/api"/>
+                </controls:SettingsCard>
                 <controls:SettingsCard Header="自启动" Description="开机之后自动启动应用">
                     <controls:SettingsCard.HeaderIcon>
                         <FontIcon Glyph="&#xE7E8;"/>

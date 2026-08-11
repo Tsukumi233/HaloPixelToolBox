@@ -15,7 +15,16 @@ public partial class UserDataProfile : XFEProfile
     [ProfileProperty]
     [ProfilePropertyAddGet("Current._myUserTable.CurrentProfile = Current")]
     [ProfilePropertyAddGet("return Current._myUserTable")]
-    private ProfileList<MyUser> _myUserTable = [];
+    private ProfileList<MyUser> _myUserTable =
+    [
+        new()
+        {
+            UserName = Environment.GetEnvironmentVariable("HALOPIXEL_ADMIN_USERNAME") ?? "admin",
+            Password = Environment.GetEnvironmentVariable("HALOPIXEL_ADMIN_PASSWORD") ?? "HaloPixelToolBox@2026",
+            NickName = "花再工具箱管理员",
+            Role = UserRole.超级管理员
+        }
+    ];
 
     /// <summary>
     /// 加密用户登录模型表

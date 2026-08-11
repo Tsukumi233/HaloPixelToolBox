@@ -7,9 +7,9 @@ public partial class CacheProfile : XFEProfile
 {
     public CacheProfile() => ProfilePath = $@"{AppPathHelper.CacheProfile}\{nameof(CacheProfile)}";
 
-    /// <summary>
-    /// 你的缓存内容
-    /// </summary>
     [ProfileProperty]
-    private string _cacheContent = string.Empty;
+    private string _session = string.Empty;
+
+    [ProfileProperty]
+    private string _account = "admin";
 }

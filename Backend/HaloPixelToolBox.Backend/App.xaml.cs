@@ -36,6 +36,8 @@ public partial class App : Application
         PageManager.RegisterPage(typeof(AppShellPage));
         PageManager.RegisterPage(typeof(MainPage));
         PageManager.RegisterPage(typeof(LogViewPage));
+        PageManager.RegisterPage(typeof(AddressResolveManagePage));
+        PageManager.RegisterPage(typeof(IPBanManagePage));
         PageManager.RegisterPage(typeof(SettingPage));
         UnhandledException += App_UnhandledException;
         AppDomain.CurrentDomain.UnhandledException += CurrentDomain_UnhandledException;

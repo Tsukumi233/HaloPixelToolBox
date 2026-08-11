@@ -1,5 +1,7 @@
 ﻿using System.Diagnostics;
+using System.Collections.Concurrent;
 using System.Text;
+using HaloPixelToolBox.Core.Models.Bar;
 using XFEExtension.NetCore.MemoryEditor;
 using XFEExtension.NetCore.StringExtension;
 
@@ -12,16 +14,13 @@ public class CloudMusicLyricsReader
     public FileVersionInfo? VersionInfo { get; set; }
     public Version Version { get; set; } = new();
     public MemoryEditor Editor { get; set; } = new();
-    public static Dictionary<string, Func<MemoryEditor, nint>> VersionResolverDictionary { get; } = new()
+    public static ConcurrentDictionary<string, AddressResolverModel> VersionResolverDictionary { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public static void SetAddressResolver(AddressResolverModel resolver)
     {
-        { "3.1.35", editor => editor.ResolvePointerAddress("cloudmusic.dll", 0x01ED9690, 0x120, 0x8, 0x0) },
-        { "3.1.30", editor => editor.ResolvePointerAddress("cloudmusic.dll", 0x01DF44D0, 0x120, 0x8, 0x0) },
-        { "3.1.29", editor => editor.ResolvePointerAddress("cloudmusic.dll", 0x01DEB4D0, 0x120, 0x8, 0x0) },
-        { "3.1.28", editor => editor.ResolvePointerAddress("cloudmusic.dll", 0x01DDF290, 0x120, 0x8, 0x0) },
-        { "3.1.27", editor => editor.ResolvePointerAddress("cloudmusic.dll", 0x01DDE290, 0xE0, 0x8, 0xE8, 0x38, 0x118, 0x8, 0x0) },
-        { "3.1.26", editor => editor.ResolvePointerAddress("cloudmusic.dll", 0x01DD5130, 0xE8, 0x38, 0x120, 0x18, 0x0) },
-        { "3.1.25", editor => editor.ResolvePointerAddress("cloudmusic.dll", 0x01DAFF60, 0xE0, 0x8, 0x128, 0x18, 0x0) }
-    };
+        if (!string.IsNullOrWhiteSpace(resolver.Version))
+            VersionResolverDictionary[resolver.Version] = resolver;
+    }
 
     public bool Initialize()
     {
@@ -72,13 +71,16 @@ public class CloudMusicLyricsReader
     {
         try
         {
-            if (Version.MajorRevision == 0)
+            if (Version.Major == 0)
                 return false;
             if (UseInputedAddress)
                 return true;
             nint address = 0;
             if (VersionResolverDictionary.TryGetValue(Version.ToString(3), out var resolver))
-                address = resolver(Editor);
+                address = Editor.ResolvePointerAddress(
+                    resolver.ModuleName,
+                    checked((nint)resolver.BaseAddress),
+                    resolver.Offsets.Select(static offset => checked((nint)offset)).ToArray());
             else
                 Console.WriteLine($"[WARN]未找到匹配的版本解析器，当前版本：{Version}");
             if (address != Address)

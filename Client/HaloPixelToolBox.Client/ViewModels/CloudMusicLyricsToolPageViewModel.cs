@@ -1,5 +1,6 @@
 ﻿using CommunityToolkit.Mvvm.ComponentModel;
 using HaloPixelToolBox.Client.Profiles.CrossVersionProfiles;
+using HaloPixelToolBox.Client.Utilities;
 using HaloPixelToolBox.Core.Models.Bar;
 using HaloPixelToolBox.Core.Utilities;
 using System.Diagnostics;
@@ -12,28 +13,22 @@ namespace HaloPixelToolBox.Client.ViewModels;
 
 public partial class CloudMusicLyricsToolPageViewModel : ServiceBaseViewModelBase<string>
 {
-    [ObservableProperty]
-    public partial bool DeviceReady { get; set; }
-    [ObservableProperty]
-    public partial bool CloudMusicReady { get; set; }
-    [ObservableProperty]
-    public partial bool EnableCloudMusicLyrics { get; set; } = CloudMusicLyricsProfile.EnableCloudMusicLyrics;
-    [ObservableProperty]
-    public partial bool SwitchBackWhenPause { get; set; } = CloudMusicLyricsProfile.SwitchBackWhenPause;
-    [ObservableProperty]
-    public partial bool UseInputedAddress { get; set; } = CloudMusicLyricsProfile.UseInputedAddress;
-    [ObservableProperty]
-    public partial string InputedAddress { get; set; } = CloudMusicLyricsProfile.InputedAddress;
-    [ObservableProperty]
-    public partial int SwitchBackTimeout { get; set; } = CloudMusicLyricsProfile.SwitchBackTimeout;
-    [ObservableProperty]
-    public partial string CloudMusicVersion { get; set; } = string.Empty;
-    [ObservableProperty]
-    public partial string SupportedVersion { get; set; } = CloudMusicLyricsReader.VersionResolverDictionary.Keys.FirstOrDefault() ?? string.Empty;
+    [ObservableProperty] public partial bool DeviceReady { get; set; }
+    [ObservableProperty] public partial bool CloudMusicReady { get; set; }
+    [ObservableProperty] public partial bool EnableCloudMusicLyrics { get; set; } = CloudMusicLyricsProfile.EnableCloudMusicLyrics;
+    [ObservableProperty] public partial bool SwitchBackWhenPause { get; set; } = CloudMusicLyricsProfile.SwitchBackWhenPause;
+    [ObservableProperty] public partial bool UseInputedAddress { get; set; } = CloudMusicLyricsProfile.UseInputedAddress;
+    [ObservableProperty] public partial string InputedAddress { get; set; } = CloudMusicLyricsProfile.InputedAddress;
+    [ObservableProperty] public partial int SwitchBackTimeout { get; set; } = CloudMusicLyricsProfile.SwitchBackTimeout;
+    [ObservableProperty] public partial string CloudMusicVersion { get; set; } = string.Empty;
+    [ObservableProperty] public partial string SupportedVersion { get; set; } = "等待检测";
     public HaloPixelDevice Device { get; set; } = new();
     public CloudMusicLyricsReader Reader { get; set; }
 
     public ISettingService SettingService { get; } = ServiceManager.GetService<ISettingService>();
+
+    private string _lastResolverAttemptVersion = string.Empty;
+    private DateTime _lastResolverAttemptTime = DateTime.MinValue;
 
     /// <summary>
     /// Safely parse a hexadecimal address string to nint, returning 0 if parsing fails
@@ -75,6 +70,10 @@ public partial class CloudMusicLyricsToolPageViewModel : ServiceBaseViewModelBas
     public CloudMusicLyricsToolPageViewModel()
     {
         Console.WriteLine("初始化网易云歌词读取器");
+        AddressResolverProvider.LoadCachedResolvers();
+        SupportedVersion = CloudMusicLyricsReader.VersionResolverDictionary.Keys
+            .OrderByDescending(static version => Version.TryParse(version, out var parsed) ? parsed : new Version())
+            .FirstOrDefault() ?? "由服务器动态获取";
         Reader = new CloudMusicLyricsReader
         {
             UseInputedAddress = UseInputedAddress,
@@ -112,6 +111,8 @@ public partial class CloudMusicLyricsToolPageViewModel : ServiceBaseViewModelBas
                 while (!CloudMusicReady)
                 {
                     var ready = Reader.Initialize();
+                    if (!ready && !UseInputedAddress)
+                        ready = await TryUpdateAddressResolverAsync();
                     AutoNavigationParameterService.CurrentPage?.DispatcherQueue.TryEnqueue(() =>
                     {
                         CloudMusicReady = ready;
@@ -225,5 +226,26 @@ public partial class CloudMusicLyricsToolPageViewModel : ServiceBaseViewModelBas
             }
         });
         Console.WriteLine("网易云后台线程启动完成");
+    }
+
+    private async Task<bool> TryUpdateAddressResolverAsync()
+    {
+        if (Reader.Version.Major == 0)
+            return false;
+
+        var version = Reader.Version.ToString(3);
+        if (string.Equals(version, _lastResolverAttemptVersion, StringComparison.OrdinalIgnoreCase) &&
+            DateTime.Now - _lastResolverAttemptTime < TimeSpan.FromMinutes(1))
+            return Reader.ReresolveAddress();
+
+        _lastResolverAttemptVersion = version;
+        _lastResolverAttemptTime = DateTime.Now;
+        var resolver = await AddressResolverProvider.GetAsync(version);
+        if (resolver is null)
+            return false;
+
+        CloudMusicLyricsReader.SetAddressResolver(resolver);
+        AutoNavigationParameterService.CurrentPage?.DispatcherQueue.TryEnqueue(() => SupportedVersion = resolver.Version);
+        return Reader.ReresolveAddress();
     }
 }

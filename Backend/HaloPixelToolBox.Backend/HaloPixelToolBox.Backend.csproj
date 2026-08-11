@@ -15,6 +15,10 @@
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <Nullable>enable</Nullable>
   </PropertyGroup>
+  <ItemGroup>
+    <None Remove="Views\AddressResolveManagePage.xaml" />
+    <None Remove="Views\IPBanManagePage.xaml" />
+  </ItemGroup>
   
   <ItemGroup>
     <Content Update="Assets\**">
@@ -55,6 +59,14 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\HaloPixelToolBox.Backend.Core\HaloPixelToolBox.Backend.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Page Update="Views\AddressResolveManagePage.xaml">
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Update="Views\IPBanManagePage.xaml">
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
   </ItemGroup>
   <ItemGroup>
     <Page Update="Views\LogViewPage.xaml">

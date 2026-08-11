@@ -11,18 +11,12 @@ namespace HaloPixelToolBox.Client.ViewModels;
 
 public partial class AppShellPageViewModel : ViewModelBase
 {
-    [ObservableProperty]
-    public partial int SelectedIndex { get; set; }
-    [ObservableProperty]
-    public partial bool NeverAskAgainWhenClose { get; set; }
-    [ObservableProperty]
-    public partial bool CanGoBack { get; set; }
-    [ObservableProperty]
-    public partial string UpgradeContentText { get; set; } = string.Empty;
-    [ObservableProperty]
-    public partial string UserName { get; set; } = Environment.UserName;
-    [ObservableProperty]
-    public partial ImageSource UserTile { get; set; } = Win32Helper.GetUserTile();
+    [ObservableProperty] public partial int SelectedIndex { get; set; }
+    [ObservableProperty] public partial bool NeverAskAgainWhenClose { get; set; }
+    [ObservableProperty] public partial bool CanGoBack { get; set; }
+    [ObservableProperty] public partial string UpgradeContentText { get; set; } = string.Empty;
+    [ObservableProperty] public partial string UserName { get; set; } = Environment.UserName;
+    [ObservableProperty] public partial ImageSource UserTile { get; set; } = Win32Helper.GetUserTile();
 
     public IDialogService DialogService { get; } = ServiceManager.GetService<IDialogService>();
     public INavigationViewService NavigationViewService { get; } = ServiceManager.GetService<INavigationViewService>();

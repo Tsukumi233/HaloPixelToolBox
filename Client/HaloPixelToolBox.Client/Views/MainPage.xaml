@@ -15,8 +15,6 @@
     <Grid>
         <StackPanel Orientation="Vertical" Spacing="20">
             <TextBlock Text="Welcome to the Main Page!" FontSize="24" HorizontalAlignment="Center" Margin="20"/>
-            <TextBlock Text="{x:Bind ViewModel.ClickCount, Mode=OneWay, Converter={StaticResource StringFormatConverter}, ConverterParameter='Clicked Times: (0)'}"/>
-            <Button Content="Click" Command="{x:Bind ViewModel.IncrementClickCountCommand}"/>
         </StackPanel>
     </Grid>
 </Page>

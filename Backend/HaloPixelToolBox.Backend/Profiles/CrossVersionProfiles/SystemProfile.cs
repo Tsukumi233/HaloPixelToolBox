@@ -17,6 +17,11 @@ public partial class SystemProfile : XFEProfile
     /// </summary>
     [ProfileProperty]
     private bool _autoStart;
+    /// <summary>
+    /// 管理端连接的服务器地址
+    /// </summary>
+    [ProfileProperty]
+    private string _serverAddress = HaloPixelToolBox.Core.Utilities.DataManager.DefaultRequestAddress;
 
     static partial void SetThemeProperty(ref ElementTheme value) => AppThemeHelper.ChangeTheme(value);
 }

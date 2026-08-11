@@ -3,7 +3,7 @@
     x:Class="HaloPixelToolBox.Backend.Views.AppShellPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    xmlns:local="using:HaloPixelToolBox.Views"
+    xmlns:local="using:HaloPixelToolBox.Backend.Views"
     xmlns:add="using:XFEExtension.NetCore.WinUIHelper.Utilities.Additions"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
@@ -44,12 +44,22 @@
         </Grid>
         <NavigationView x:Name="navigationView" IsBackButtonVisible="Visible" Canvas.ZIndex="0" IsBackEnabled="{x:Bind ViewModel.CanGoBack, Mode=OneWay}" IsSettingsVisible="False" DisplayModeChanged="NavigationView_DisplayModeChanged" PaneOpening="NavigationView_PaneOpening" PaneOpened="NavigationView_PaneOpened" PaneClosing="NavigationView_PaneClosing" PaneClosed="NavigationView_PaneClosed">
             <NavigationView.MenuItems>
-                <NavigationViewItem Content="主页" add:NavigationAddition.NavigateTo="HaloPixelToolBox.Views.MainPage" add:NavigationAddition.NavigateParameter="MyParameter">
+                <NavigationViewItem Content="主页" add:NavigationAddition.NavigateTo="HaloPixelToolBox.Backend.Views.MainPage" add:NavigationAddition.NavigateParameter="MyParameter">
                     <NavigationViewItem.Icon>
                         <FontIcon Glyph="&#xE7C3;"/>
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
-                <NavigationViewItem Content="日志" add:NavigationAddition.NavigateTo="HaloPixelToolBox.Views.LogViewPage" add:PermissionAddition.RequiredPermission="6">
+                <NavigationViewItem Content="解析地址" add:NavigationAddition.NavigateTo="HaloPixelToolBox.Backend.Views.AddressResolveManagePage">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE8B7;"/>
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="IP 封禁" add:NavigationAddition.NavigateTo="HaloPixelToolBox.Backend.Views.IPBanManagePage">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE72E;"/>
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="日志" add:NavigationAddition.NavigateTo="HaloPixelToolBox.Backend.Views.LogViewPage">
                     <NavigationViewItem.Icon>
                         <FontIcon Glyph="&#xE8FD;"/>
                     </NavigationViewItem.Icon>
@@ -58,7 +68,7 @@
             </NavigationView.MenuItems>
 
             <NavigationView.FooterMenuItems>
-                <NavigationViewItem Content="设置" add:NavigationAddition.NavigateTo="HaloPixelToolBox.Views.SettingPage">
+                <NavigationViewItem Content="设置" add:NavigationAddition.NavigateTo="HaloPixelToolBox.Backend.Views.SettingPage">
                     <NavigationViewItem.Icon>
                         <FontIcon Glyph="&#xE713;"/>
                     </NavigationViewItem.Icon>

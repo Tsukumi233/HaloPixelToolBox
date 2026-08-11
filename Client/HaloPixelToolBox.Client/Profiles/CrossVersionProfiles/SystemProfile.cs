@@ -37,6 +37,11 @@ public partial class SystemProfile : XFEProfile
     /// </summary>
     [ProfileProperty]
     private string ignoreVersion = string.Empty;
+    /// <summary>
+    /// 动态解析地址服务器
+    /// </summary>
+    [ProfileProperty]
+    private string serverAddress = HaloPixelToolBox.Core.Utilities.DataManager.DefaultRequestAddress;
 
     static partial void SetThemeProperty(ref ElementTheme value) => AppThemeHelper.ChangeTheme(value);
 }
