@@ -15,12 +15,12 @@ namespace HaloPixelToolBox;
 /// </summary>
 public partial class App : Application
 {
-    public ITrayIconService TrayIconService { get; } = ServiceManager.GetService<ITrayIconService>();
-    public ICloseWindowService CloseWindowService { get; } = ServiceManager.GetService<ICloseWindowService>();
+    public ITrayIconService TrayIconService { get; private set; } = null!;
+    public ICloseWindowService CloseWindowService { get; private set; } = null!;
     /// <summary>
     /// 主页窗口
     /// </summary>
-    public static MainWindow MainWindow { get; set; } = new();
+    public static MainWindow MainWindow { get; private set; } = null!;
 
     /// <summary>
     /// Initializes the singleton application object.  This is the first line of authored code
@@ -50,7 +50,6 @@ public partial class App : Application
         UnhandledException += App_UnhandledException;
         AppDomain.CurrentDomain.ProcessExit += CurrentDomain_ProcessExit;
         AppDomain.CurrentDomain.UnhandledException += CurrentDomain_UnhandledException;
-        AppInstance.GetCurrent().Activated += App_Activated;
         Console.WriteLine("事件订阅完成");
     }
 
@@ -114,6 +113,10 @@ public partial class App : Application
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
         Console.WriteLine("主窗体启动中...");
+        MainWindow = new MainWindow();
+        TrayIconService = ServiceManager.GetService<ITrayIconService>();
+        CloseWindowService = ServiceManager.GetService<ICloseWindowService>();
+        AppInstance.GetCurrent().Activated += App_Activated;
         TrayIconService.Initilize(DispatcherQueue.GetForCurrentThread());
         CloseWindowService.Initialize(MainWindow);
         MainWindow.Content = new AppShellPage();
