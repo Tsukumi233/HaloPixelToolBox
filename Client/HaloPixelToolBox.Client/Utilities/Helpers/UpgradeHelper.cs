@@ -1,67 +1,45 @@
-﻿using ApplicationUpgradeManager.Core.Model;
 using System.Diagnostics;
 using System.Reflection;
-using XFEExtension.NetCore.UpgradeHelper.Utilities;
+using System.Text.Json;
 
 namespace HaloPixelToolBox.Client.Utilities.Helpers;
 
 public static class UpgradeHelper
 {
-    public static string RequestAddress => "http://upgrade.api.xfe.studio/upgrade";
-    public static Upgrader Upgrader { get; set; } = new(RequestAddress);
+    public const string ReleasesUrl = "https://github.com/Tsukumi233/HaloPixelToolBox/releases";
+    private static readonly HttpClient Client = new() { Timeout = TimeSpan.FromSeconds(15) };
     public static Version Version => Assembly.GetExecutingAssembly().GetName().Version ?? new Version(1, 0, 0);
+    public sealed record UpgradeNotes(bool IsLatest, string LatestVersion, string ReleaseNotes);
 
-    /// <summary>
-    /// 检测是否需要更新
-    /// </summary>
-    /// <returns></returns>
-    public static async Task<bool> CheckUpgrade()
+    public static async Task<UpgradeNotes?> GetReleaseNotes(CancellationToken cancellationToken = default)
     {
         try
         {
-            return (await Upgrader.GetReleaseNotes("HaloPixelToolBox.Client", Version.ToString())).IsLatest;
+            using var request = new HttpRequestMessage(HttpMethod.Get,
+                "https://api.github.com/repos/Tsukumi233/HaloPixelToolBox/releases/latest");
+            request.Headers.UserAgent.ParseAdd("HaloPixelToolBox/" + Version);
+            using var response = await Client.SendAsync(request, cancellationToken);
+            response.EnsureSuccessStatusCode();
+            using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+            var tag = json.RootElement.GetProperty("tag_name").GetString() ?? string.Empty;
+            if (!System.Version.TryParse(tag.TrimStart('v', 'V'), out var latest))
+                throw new FormatException($"无法识别版本标签：{tag}");
+            var normalized = new Version(latest.Major, latest.Minor, Math.Max(0, latest.Build), Math.Max(0, latest.Revision));
+            return new(normalized <= Version, tag,
+                (json.RootElement.GetProperty("body").GetString() ?? string.Empty) +
+                "\n\n请前往 GitHub Releases 手动下载并更新。");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[ERROR]检查更新时发生错误：{ex.Message}");
-            // 发生错误时默认返回 true（表示已是最新版本），避免影响用户使用
-            return true;
-        }
-    }
-
-    /// <summary>
-    /// 获取更新信息
-    /// </summary>
-    /// <returns></returns>
-    public static async Task<UpgradeInfoNotes?> GetReleaseNotes()
-    {
-        try
-        {
-            return await Upgrader.GetReleaseNotes("HaloPixelToolBox.Client", Version.ToString());
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[ERROR]获取更新信息时发生错误：{ex.Message}");
-            // 返回 null 表示获取失败
+            Console.WriteLine($"[WARN]检查 GitHub 更新失败：{ex.Message}");
             return null;
         }
     }
 
-    /// <summary>
-    /// 开始更新
-    /// </summary>
-    public static void StartUpdate(string downloadUrl)
+    public static async Task<bool> CheckUpgrade() => (await GetReleaseNotes())?.IsLatest ?? true;
+
+    public static void OpenReleases()
     {
-        var startInfo = new ProcessStartInfo("Installer.exe")
-        {
-            UseShellExecute = true,
-            Verb = "runas"
-        };
-        startInfo.ArgumentList.Add("Upgrade");
-        startInfo.ArgumentList.Add(downloadUrl);
-        startInfo.ArgumentList.Add("");
-        Process.Start(startInfo);
-        Process.GetCurrentProcess().Kill();
-        Application.Current.Exit();
+        using var process = Process.Start(new ProcessStartInfo(ReleasesUrl) { UseShellExecute = true });
     }
 }

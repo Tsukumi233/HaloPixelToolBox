@@ -10,7 +10,7 @@ using XFEExtension.NetCore.StringExtension;
 
 namespace HaloPixelToolBox.Core.Utilities;
 
-public class CloudMusicLyricsReader
+public class CloudMusicLyricsReader : IAsyncDisposable
 {
     private const string CachedLyricsVersion = "3.1.41";
     private const long PlayerStateBaseAddress = 0x02214AB0;
@@ -31,7 +31,25 @@ public class CloudMusicLyricsReader
     public bool UseInputedAddress { get; set; }
     public FileVersionInfo? VersionInfo { get; set; }
     public Version Version { get; set; } = new();
-    public MemoryEditor Editor { get; set; } = new();
+    public MemoryEditor Editor { get; private set; } = new() { AutoReacquireProcess = false };
+    private Process? _process;
+    private readonly object _memoryLock = new();
+    private readonly BackgroundTaskScope _background = new();
+    private Task? _disposeTask;
+
+    public ValueTask DisposeAsync() => new(_disposeTask ??= StopCoreAsync());
+
+    private async Task StopCoreAsync()
+    {
+        await _background.StopAsync().ConfigureAwait(false);
+        lock (_memoryLock)
+        {
+            Editor.Dispose();
+            _process?.Dispose();
+            _process = null;
+        }
+    }
+
     public static ConcurrentDictionary<string, AddressResolverModel> VersionResolverDictionary { get; } = new(StringComparer.OrdinalIgnoreCase);
     public bool UsesTimedLyrics => !UseInputedAddress && Version.Major > 0 &&
                                    string.Equals(Version.ToString(3), CachedLyricsVersion, StringComparison.OrdinalIgnoreCase);
@@ -44,132 +62,163 @@ public class CloudMusicLyricsReader
 
     public bool Initialize()
     {
-        if (GetCloudMusicLyricsProcess() is not Process process)
-            return false;
+        lock (_memoryLock)
+        {
+            _background.Token.ThrowIfCancellationRequested();
 
-        Console.WriteLine($"[DEBUG]已找到进程：{process.ProcessName}({process.Id}|{process.Id:X}) - {process.MainWindowTitle}");
-        Editor.CurrentProcess = process;
-        VersionInfo = FileVersionInfo.GetVersionInfo(process.MainModule?.FileName ?? string.Empty);
-        Version = new Version(VersionInfo?.FileVersion ?? "0.0.0.0");
-        try
-        {
-            Console.WriteLine($"[DEBUG]版本信息：{VersionInfo?.FileVersion}");
-            Console.WriteLine($"[DEBUG]版本信息缩略：{Version.ToString(3)}");
+            if (_process is { HasExited: false })
+                return ReresolveAddress();
+            Editor.Dispose();
+            _process?.Dispose();
+            _process = null;
+            Version = new Version();
+            VersionInfo = null;
+            if (!UseInputedAddress) Address = 0;
+            InvalidateTimedLyrics();
+            Editor = new MemoryEditor { AutoReacquireProcess = false };
+            if (GetCloudMusicLyricsProcess() is not Process process)
+                return false;
+            _process = process;
+
+            Console.WriteLine($"[DEBUG]已找到进程：{process.ProcessName}({process.Id}|{process.Id:X}) - {process.MainWindowTitle}");
+            Editor.CurrentProcess = process;
+            VersionInfo = FileVersionInfo.GetVersionInfo(process.MainModule?.FileName ?? string.Empty);
+            Version = new Version(VersionInfo?.FileVersion ?? "0.0.0.0");
+            try
+            {
+                Console.WriteLine($"[DEBUG]版本信息：{VersionInfo?.FileVersion}");
+                Console.WriteLine($"[DEBUG]版本信息缩略：{Version.ToString(3)}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ERROR]版本输出异常：{ex.Message}");
+                Console.WriteLine($"[TRACE]{ex.StackTrace}");
+            }
+            return ReresolveAddress();
         }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[ERROR]版本输出异常：{ex.Message}");
-            Console.WriteLine($"[TRACE]{ex.StackTrace}");
-        }
-        return ReresolveAddress();
     }
 
     public bool TryReadLyrics(out string lyrics)
     {
-        lyrics = "无法读取歌词";
-        try
+        lock (_memoryLock)
         {
-            if (Editor.ReadMemory(Address, 200, out var buffer))
+            _background.Token.ThrowIfCancellationRequested();
+
+            lyrics = "无法读取歌词";
+            try
             {
-                lyrics = Encoding.Unicode.GetString(buffer, 0, GetValidLength(buffer));
-                return true;
+                if (Editor.ReadMemory(Address, 200, out var buffer))
+                {
+                    lyrics = Encoding.Unicode.GetString(buffer, 0, GetValidLength(buffer));
+                    return true;
+                }
             }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ERROR]读取歌词异常：{ex.Message}");
+                Console.WriteLine($"[TRACE]{ex.StackTrace}");
+            }
+            return false;
         }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[ERROR]读取歌词异常：{ex.Message}");
-            Console.WriteLine($"[TRACE]{ex.StackTrace}");
-        }
-        return false;
     }
 
     public bool TryReadLyrics(string? trackIdentity, out string lyrics)
     {
-        if (!UsesTimedLyrics)
-            return TryReadLyrics(out lyrics);
-
-        var identity = trackIdentity ?? string.Empty;
-        try
+        lock (_memoryLock)
         {
-            EnsureTimedLyricsLoading(identity);
-            lyrics = BuildTrackFallback(identity);
-            if (!TryReadPlaybackPosition(out var playbackPositionMilliseconds))
-                return !string.IsNullOrWhiteSpace(lyrics);
+            _background.Token.ThrowIfCancellationRequested();
 
-            TimedLyricLine[] lines;
-            lock (_timedLyricsLock)
-                lines = _timedLyrics;
-            if (lines.Length == 0)
-                return !string.IsNullOrWhiteSpace(lyrics);
+            if (!UsesTimedLyrics)
+                return TryReadLyrics(out lyrics);
 
-            TimedLyricLine? currentLine = null;
-            foreach (var line in lines)
+            var identity = trackIdentity ?? string.Empty;
+            try
             {
-                if (line.StartMilliseconds > playbackPositionMilliseconds)
-                    break;
-                currentLine = line;
+                EnsureTimedLyricsLoading(identity);
+                lyrics = BuildTrackFallback(identity);
+                if (!TryReadPlaybackPosition(out var playbackPositionMilliseconds))
+                    return !string.IsNullOrWhiteSpace(lyrics);
+
+                TimedLyricLine[] lines;
+                lock (_timedLyricsLock)
+                    lines = _timedLyrics;
+                if (lines.Length == 0)
+                    return !string.IsNullOrWhiteSpace(lyrics);
+
+                TimedLyricLine? currentLine = null;
+                foreach (var line in lines)
+                {
+                    if (line.StartMilliseconds > playbackPositionMilliseconds)
+                        break;
+                    currentLine = line;
+                }
+
+                if (currentLine is null)
+                    return !string.IsNullOrWhiteSpace(lyrics);
+
+                lyrics = currentLine.Text;
+                return true;
             }
-
-            if (currentLine is null)
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ERROR]读取网易云逐行歌词异常：{ex.Message}");
+                Console.WriteLine($"[TRACE]{ex.StackTrace}");
+                lyrics = BuildTrackFallback(identity);
                 return !string.IsNullOrWhiteSpace(lyrics);
-
-            lyrics = currentLine.Text;
-            return true;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[ERROR]读取网易云逐行歌词异常：{ex.Message}");
-            Console.WriteLine($"[TRACE]{ex.StackTrace}");
-            lyrics = BuildTrackFallback(identity);
-            return !string.IsNullOrWhiteSpace(lyrics);
+            }
         }
     }
 
     public bool ReresolveAddress()
     {
-        try
+        lock (_memoryLock)
         {
-            if (Version.Major == 0)
-                return false;
-            if (UseInputedAddress)
+            _background.Token.ThrowIfCancellationRequested();
+
+            try
+            {
+                if (Version.Major == 0)
+                    return false;
+                if (UseInputedAddress)
+                    return true;
+
+                nint address = 0;
+                if (UsesTimedLyrics)
+                {
+                    address = Editor.ResolvePointerAddress(
+                        "cloudmusic.dll",
+                        checked((nint)PlayerStateBaseAddress),
+                        PlayerStateOffsets);
+                }
+                else if (VersionResolverDictionary.TryGetValue(Version.ToString(3), out var resolver))
+                {
+                    address = Editor.ResolvePointerAddress(
+                        resolver.ModuleName,
+                        checked((nint)resolver.BaseAddress),
+                        resolver.Offsets.Select(static offset => checked((nint)offset)).ToArray());
+                }
+                else
+                {
+                    Console.WriteLine($"[WARN]未找到匹配的版本解析器，当前版本：{Version}");
+                }
+
+                if (address != Address)
+                {
+                    Console.WriteLine($"[DEBUG]读取到新的地址：{address}({address:X})");
+                    InvalidateTimedLyrics();
+                }
+                if (address == 0)
+                    return false;
+
+                Address = address;
                 return true;
-
-            nint address = 0;
-            if (UsesTimedLyrics)
-            {
-                address = Editor.ResolvePointerAddress(
-                    "cloudmusic.dll",
-                    checked((nint)PlayerStateBaseAddress),
-                    PlayerStateOffsets);
             }
-            else if (VersionResolverDictionary.TryGetValue(Version.ToString(3), out var resolver))
+            catch (Exception ex)
             {
-                address = Editor.ResolvePointerAddress(
-                    resolver.ModuleName,
-                    checked((nint)resolver.BaseAddress),
-                    resolver.Offsets.Select(static offset => checked((nint)offset)).ToArray());
-            }
-            else
-            {
-                Console.WriteLine($"[WARN]未找到匹配的版本解析器，当前版本：{Version}");
-            }
-
-            if (address != Address)
-            {
-                Console.WriteLine($"[DEBUG]读取到新的地址：{address}({address:X})");
-                InvalidateTimedLyrics();
-            }
-            if (address == 0)
+                Console.WriteLine($"[ERROR]解析地址异常：{ex.Message}");
+                Console.WriteLine($"[TRACE]{ex.StackTrace}");
                 return false;
-
-            Address = address;
-            return true;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[ERROR]解析地址异常：{ex.Message}");
-            Console.WriteLine($"[TRACE]{ex.StackTrace}");
-            return false;
+            }
         }
     }
 
@@ -198,9 +247,9 @@ public class CloudMusicLyricsReader
             generation = _lyricsLoadGeneration;
         }
 
-        _ = Task.Run(async () =>
+        _background.Run(async () =>
         {
-            var (loaded, lines, source, songId) = await LoadTimedLyricsAsync(trackIdentity);
+            var (loaded, lines, source, songId) = await LoadTimedLyricsAsync(trackIdentity, _background.Token);
             lock (_timedLyricsLock)
             {
                 if (generation != _lyricsLoadGeneration ||
@@ -222,7 +271,7 @@ public class CloudMusicLyricsReader
         });
     }
 
-    private static async Task<(bool Loaded, TimedLyricLine[] Lines, string Source, string SongId)> LoadTimedLyricsAsync(string trackIdentity)
+    private static async Task<(bool Loaded, TimedLyricLine[] Lines, string Source, string SongId)> LoadTimedLyricsAsync(string trackIdentity, CancellationToken cancellationToken)
     {
         if (!TryResolveSongId(trackIdentity, out var songId))
             return (false, [], string.Empty, string.Empty);
@@ -234,12 +283,12 @@ public class CloudMusicLyricsReader
         try
         {
             var requestUri = $"https://music.163.com/api/song/lyric?id={Uri.EscapeDataString(songId)}&lv=1&kv=1&tv=-1";
-            using var response = await LyricsHttpClient.GetAsync(requestUri, HttpCompletionOption.ResponseHeadersRead);
+            using var response = await LyricsHttpClient.GetAsync(requestUri, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
             if (!response.IsSuccessStatusCode)
                 return (false, [], string.Empty, songId);
 
-            await using var stream = await response.Content.ReadAsStreamAsync();
-            using var document = await JsonDocument.ParseAsync(stream);
+            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
             if (!TryParseLyricsDocument(document.RootElement, out var lines))
                 return (false, [], string.Empty, songId);
 
@@ -561,13 +610,30 @@ public class CloudMusicLyricsReader
 
     public static Process? GetCloudMusicLyricsProcess()
     {
-        foreach (var process in Process.GetProcesses())
+        var processes = Process.GetProcessesByName("cloudmusic");
+        Process? selected = null;
+        try
         {
-            if (process.ProcessName == "cloudmusic" &&
-                (process.MainWindowTitle == "桌面歌词" || !process.MainWindowTitle.IsNullOrWhiteSpace()))
-                return process;
+            foreach (var process in processes)
+            {
+                try
+                {
+                    if (!string.IsNullOrWhiteSpace(process.MainWindowTitle))
+                    {
+                        selected = process;
+                        break;
+                    }
+                }
+                catch (InvalidOperationException) { /* Process exited during enumeration. */ }
+                catch (System.ComponentModel.Win32Exception) { /* Process access denied. */ }
+            }
+            return selected;
         }
-        return null;
+        finally
+        {
+            foreach (var process in processes)
+                if (!ReferenceEquals(process, selected)) process.Dispose();
+        }
     }
 
     private sealed record TimedLyricLine(long StartMilliseconds, string Text);

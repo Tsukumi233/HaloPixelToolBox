@@ -1,4 +1,4 @@
-﻿using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.ComponentModel;
 using HaloPixelToolBox.Client.Profiles.CrossVersionProfiles;
 using HaloPixelToolBox.Client.Utilities;
 using HaloPixelToolBox.Client.Views;
@@ -30,7 +30,7 @@ public partial class CloudMusicLyricsToolPageViewModel : ServiceBaseViewModelBas
     [ObservableProperty] public partial int SyncAmbientLightSpeed { get; set; } = CloudMusicLyricsProfile.SyncAmbientLightSpeed;
     [ObservableProperty] public partial string CloudMusicVersion { get; set; } = string.Empty;
     [ObservableProperty] public partial string SupportedVersion { get; set; } = "等待检测";
-    public HaloPixelDevice Device { get; set; } = HaloPixelDevice.Shared;
+    private HaloPixelDevice Device => DeviceCoordinator.Device;
     public CloudMusicLyricsReader Reader { get; set; }
 
     public ISettingService SettingService { get; } = ServiceManager.GetService<ISettingService>();
@@ -74,6 +74,24 @@ public partial class CloudMusicLyricsToolPageViewModel : ServiceBaseViewModelBas
     }
 
     public void StopLyrics() => StopLyricSession(false);
+
+    private readonly BackgroundTaskScope _background = new();
+    private Task? _stopTask;
+    public Task StopAsync() => _stopTask ??= StopCoreAsync();
+
+    private async Task StopCoreAsync()
+    {
+        StopLyrics();
+        await _background.StopAsync();
+        if (_smtcManager is not null)
+            _smtcManager.SessionsChanged -= OnSessionsChanged;
+        if (_cloudMusicSession is not null)
+            _cloudMusicSession.MediaPropertiesChanged -= OnSmtcMediaPropertiesChanged;
+        _cloudMusicSession = null;
+        _smtcManager = null;
+        await Reader.DisposeAsync();
+    }
+
 
     public static (byte R, byte G, byte B) ParseHexColor(string hex)
     {
@@ -128,7 +146,7 @@ public partial class CloudMusicLyricsToolPageViewModel : ServiceBaseViewModelBas
             DisableSpotifyLyricsSource();
             Interlocked.Exchange(
                 ref _lyricSessionGeneration,
-                LyricSessionCoordinator.Activate(LyricSourceKind.CloudMusic));
+                DeviceCoordinator.Activate(LyricSourceKind.CloudMusic));
 
             _forceColorRefresh = true;
             _forceLyricRefresh = true;
@@ -211,6 +229,7 @@ public partial class CloudMusicLyricsToolPageViewModel : ServiceBaseViewModelBas
             if (result.TransitionWritten)
                 Console.WriteLine($"[INFO]网易云歌词动画：{(enabled ? $"已请求 {LyricTransitionPreset}" : "已请求停用")}");
         }
+        catch (OperationCanceledException) when (_background.Token.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
             _forceLyricRefresh = enabled;
@@ -238,7 +257,7 @@ public partial class CloudMusicLyricsToolPageViewModel : ServiceBaseViewModelBas
         => ExecuteAsLyricOwner(Interlocked.Read(ref _lyricSessionGeneration), action);
 
     private bool ExecuteAsLyricOwner(long sessionGeneration, Action action)
-        => LyricSessionCoordinator.ExecuteIfOwner(
+        => DeviceCoordinator.ExecuteIfOwner(
             LyricSourceKind.CloudMusic,
             sessionGeneration,
             action);
@@ -246,7 +265,7 @@ public partial class CloudMusicLyricsToolPageViewModel : ServiceBaseViewModelBas
     private void StopLyricSession(bool restoreDefaultDisplay)
     {
         var generation = Interlocked.Read(ref _lyricSessionGeneration);
-        LyricSessionCoordinator.Deactivate(
+        DeviceCoordinator.Deactivate(
             LyricSourceKind.CloudMusic,
             generation,
             () =>
@@ -349,20 +368,20 @@ public partial class CloudMusicLyricsToolPageViewModel : ServiceBaseViewModelBas
     private string _albumColorTrackIdentity = string.Empty;
     private int _albumColorUpdateGeneration;
 
-    public bool IsPlaying
+    private Windows.Media.Control.GlobalSystemMediaTransportControlsSessionPlaybackStatus? GetPlaybackStatus()
     {
-        get
+        if (_cloudMusicSession == null)
+            return null;
+        try
         {
-            if (_cloudMusicSession == null) return false;
-            try
-            {
-                var playbackInfo = _cloudMusicSession.GetPlaybackInfo();
-                return playbackInfo?.PlaybackStatus == Windows.Media.Control.GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing;
-            }
-            catch {}
-            return false;
+            return _cloudMusicSession.GetPlaybackInfo()?.PlaybackStatus;
         }
+        catch {}
+        return null;
     }
+
+    public bool IsPlaying => GetPlaybackStatus() ==
+        Windows.Media.Control.GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing;
 
     public string CurrentTitle => _currentTitle;
     public string CurrentArtist => _currentArtist;
@@ -371,40 +390,56 @@ public partial class CloudMusicLyricsToolPageViewModel : ServiceBaseViewModelBas
     {
         try
         {
-            _smtcManager = await Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager.RequestAsync();
+            _smtcManager = await Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager.RequestAsync().AsTask(_background.Token);
             UpdateCloudMusicSession();
-            _smtcManager.SessionsChanged += (s, e) => UpdateCloudMusicSession();
+            _smtcManager.SessionsChanged += OnSessionsChanged;
         }
+        catch (OperationCanceledException) when (_background.Token.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
             Console.WriteLine($"SMTC init failed: {ex.Message}");
         }
     }
 
+    private void OnSessionsChanged(Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager sender,
+        Windows.Media.Control.SessionsChangedEventArgs args)
+    {
+        _background.Run(() =>
+        {
+            UpdateCloudMusicSession();
+            return Task.CompletedTask;
+        });
+    }
+
+    private readonly object _sessionGate = new();
+
     private void UpdateCloudMusicSession()
     {
-        if (_smtcManager == null) return;
-        var sessions = _smtcManager.GetSessions();
-        var targetSession = sessions.FirstOrDefault(x => x.SourceAppUserModelId.Contains("cloudmusic", StringComparison.OrdinalIgnoreCase));
-        if (targetSession != _cloudMusicSession)
+        lock (_sessionGate)
         {
-            if (_cloudMusicSession != null)
+            if (_smtcManager == null) return;
+            var sessions = _smtcManager.GetSessions();
+            var targetSession = sessions.FirstOrDefault(x => x.SourceAppUserModelId.Contains("cloudmusic", StringComparison.OrdinalIgnoreCase));
+            if (targetSession != _cloudMusicSession)
             {
-                _cloudMusicSession.MediaPropertiesChanged -= OnSmtcMediaPropertiesChanged;
-            }
-            _cloudMusicSession = targetSession;
-            if (_cloudMusicSession != null)
-            {
-                _cloudMusicSession.MediaPropertiesChanged += OnSmtcMediaPropertiesChanged;
-                QueueAlbumColorUpdate();
-            }
-            else
-            {
-                Interlocked.Increment(ref _albumColorUpdateGeneration);
-                _currentTitle = string.Empty;
-                _currentArtist = string.Empty;
-                _albumColorTrackIdentity = string.Empty;
-                CurrentAlbumColor = null;
+                if (_cloudMusicSession != null)
+                {
+                    _cloudMusicSession.MediaPropertiesChanged -= OnSmtcMediaPropertiesChanged;
+                }
+                _cloudMusicSession = targetSession;
+                if (_cloudMusicSession != null)
+                {
+                    _cloudMusicSession.MediaPropertiesChanged += OnSmtcMediaPropertiesChanged;
+                    QueueAlbumColorUpdate();
+                }
+                else
+                {
+                    Interlocked.Increment(ref _albumColorUpdateGeneration);
+                    _currentTitle = string.Empty;
+                    _currentArtist = string.Empty;
+                    _albumColorTrackIdentity = string.Empty;
+                    CurrentAlbumColor = null;
+                }
             }
         }
     }
@@ -417,7 +452,7 @@ public partial class CloudMusicLyricsToolPageViewModel : ServiceBaseViewModelBas
     private void QueueAlbumColorUpdate()
     {
         var generation = Interlocked.Increment(ref _albumColorUpdateGeneration);
-        _ = UpdateAlbumColorAsync(generation);
+        _background.Run(() => UpdateAlbumColorAsync(generation));
     }
 
     private async Task UpdateAlbumColorAsync(int generation)
@@ -426,7 +461,7 @@ public partial class CloudMusicLyricsToolPageViewModel : ServiceBaseViewModelBas
         // contain the new title with the previous thumbnail, while the corrected
         // thumbnail can arrive close to one second later. Coalesce the pair so the
         // previous track color is never applied to the new title.
-        await Task.Delay(1200);
+        await Task.Delay(1200, _background.Token);
         if (generation != Volatile.Read(ref _albumColorUpdateGeneration))
             return;
 
@@ -436,7 +471,7 @@ public partial class CloudMusicLyricsToolPageViewModel : ServiceBaseViewModelBas
 
         try
         {
-            var media = await session.TryGetMediaPropertiesAsync();
+            var media = await session.TryGetMediaPropertiesAsync().AsTask(_background.Token);
             if (media == null || generation != Volatile.Read(ref _albumColorUpdateGeneration) || session != _cloudMusicSession)
                 return;
 
@@ -461,7 +496,7 @@ public partial class CloudMusicLyricsToolPageViewModel : ServiceBaseViewModelBas
                 return;
             }
 
-            var color = await SpotifyLyricsReader.GetDominantColorAsync(media.Thumbnail);
+            var color = await SpotifyLyricsReader.GetDominantColorAsync(media.Thumbnail, _background.Token);
             if (generation != Volatile.Read(ref _albumColorUpdateGeneration) || session != _cloudMusicSession)
                 return;
 
@@ -477,6 +512,7 @@ public partial class CloudMusicLyricsToolPageViewModel : ServiceBaseViewModelBas
                 Console.WriteLine($"[WARN]无法从网易云 SMTC 封面提取颜色：{title} - {artist}");
             }
         }
+        catch (OperationCanceledException) when (_background.Token.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
             Console.WriteLine($"Failed to update CloudMusic album color: {ex.Message}");
@@ -488,10 +524,10 @@ public partial class CloudMusicLyricsToolPageViewModel : ServiceBaseViewModelBas
         if (EnableCloudMusicLyrics)
         {
             DisableSpotifyLyricsSource();
-            _lyricSessionGeneration = LyricSessionCoordinator.Activate(LyricSourceKind.CloudMusic);
+            _lyricSessionGeneration = DeviceCoordinator.Activate(LyricSourceKind.CloudMusic);
         }
 
-        _ = InitSmtcAsync();
+        _background.Run(InitSmtcAsync);
         Console.WriteLine("初始化网易云歌词读取器");
         AddressResolverProvider.LoadCachedResolvers();
         var newestMemoryVersion = CloudMusicLyricsReader.VersionResolverDictionary.Keys
@@ -506,87 +542,59 @@ public partial class CloudMusicLyricsToolPageViewModel : ServiceBaseViewModelBas
             Address = ParseHexAddress(InputedAddress)
         };
         Console.WriteLine("准备启动网易云后台线程");
-        Task.Run(async () =>
+        _background.Run(async () =>
         {
-            try
+            while (!_background.Token.IsCancellationRequested)
             {
-                Console.WriteLine("正在搜索花再设备...");
-                while (!DeviceReady)
+                var ready = Device.Initialize();
+                AutoNavigationParameterService.CurrentPage?.DispatcherQueue.TryEnqueue(() =>
                 {
-                    var ready = Device.Initialize();
-                    AutoNavigationParameterService.CurrentPage?.DispatcherQueue.TryEnqueue(() =>
-                        {
-                            DeviceReady = ready;
-                        });
-                    await Task.Delay(500);
-                }
-                Console.WriteLine("花再设备已连接");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[ERROR]搜索花再设备时发生错误：{ex.Message}");
-                Console.WriteLine($"[TRACE]{ex.StackTrace}");
-            }
-
-        });
-        Task.Run(async () =>
-        {
-            try
-            {
-                Console.WriteLine("正在搜索云音乐...");
-                while (!CloudMusicReady)
-                {
-                    var ready = Reader.Initialize();
-                    if (!ready && !UseInputedAddress)
-                        ready = await TryUpdateAddressResolverAsync();
-                    AutoNavigationParameterService.CurrentPage?.DispatcherQueue.TryEnqueue(() =>
-                    {
-                        CloudMusicReady = ready;
-                        CloudMusicVersion = Reader.VersionInfo is not null ? $"{Reader.VersionInfo.FileVersion}" : "未检测到云音乐";
-                    });
-                    await Task.Delay(500);
-                }
-                Console.WriteLine("云音乐已准备就绪");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[ERROR]搜索云音乐时发生错误：{ex.Message}");
-                Console.WriteLine($"[TRACE]{ex.StackTrace}");
+                    if (!_background.Token.IsCancellationRequested) DeviceReady = ready;
+                });
+                await Task.Delay(500, _background.Token);
             }
         });
-        Task.Run(async () =>
+        _background.Run(async () =>
         {
-            Console.WriteLine("启动云音乐地址重解析线程");
-            while (true)
+            while (!_background.Token.IsCancellationRequested)
             {
+                var ready = false;
                 try
                 {
-                    Reader.ReresolveAddress();
-                    await Task.Delay(500);
+                    ready = Reader.Initialize();
+                    if (!ready && !UseInputedAddress)
+                        ready = await TryUpdateAddressResolverAsync();
                 }
+                catch (OperationCanceledException) when (_background.Token.IsCancellationRequested) { throw; }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[ERROR]云音乐地址重解析线程发生错误：{ex.Message}");
-                    Console.WriteLine($"[TRACE]{ex.StackTrace}");
+                    Console.WriteLine($"[WARN]检测音乐播放器失败：{ex.Message}");
                 }
+                AutoNavigationParameterService.CurrentPage?.DispatcherQueue.TryEnqueue(() =>
+                {
+                    if (_background.Token.IsCancellationRequested) return;
+                    CloudMusicReady = ready;
+                    CloudMusicVersion = Reader.VersionInfo?.FileVersion ?? "未检测到云音乐";
+                });
+                await Task.Delay(500, _background.Token);
             }
         });
-        Task.Run(async () =>
+        _background.Run(async () =>
         {
             Console.WriteLine("启动网易云歌词主线程");
             Console.WriteLine("等待花再设备...");
-            while (!DeviceReady)
-                await Task.Delay(500);
+            while (!_background.Token.IsCancellationRequested && !DeviceReady)
+                await Task.Delay(500, _background.Token);
             if (DeviceReady && EnableCloudMusicLyrics)
             {
                 Console.WriteLine("花再设备已就绪，显示启动信息");
                 var startupGeneration = Interlocked.Read(ref _lyricSessionGeneration);
                 ConfigureLyricTransition(true, sessionGeneration: startupGeneration);
                 ExecuteAsLyricOwner(startupGeneration, () => TryShowLyricText("花再工具箱已启动~"));
-                await Task.Delay(3000);
+                await Task.Delay(3000, _background.Token);
                 Console.WriteLine("OK");
             }
-            while (true)
+            while (!_background.Token.IsCancellationRequested)
             {
                 _isClockUI = false;
                 var time = 0;
@@ -606,15 +614,17 @@ public partial class CloudMusicLyricsToolPageViewModel : ServiceBaseViewModelBas
                         var lastAmbientLightEffect = CloudMusicLyricsProfile.SyncAmbientLightEffect;
                         var lastAmbientLightBrightness = CloudMusicLyricsProfile.SyncAmbientLightBrightness;
                         var lastAmbientLightSpeed = CloudMusicLyricsProfile.SyncAmbientLightSpeed;
-                        while (true)
+                        while (!_background.Token.IsCancellationRequested)
                         {
                             try
                             {
                                 if (!DeviceReady || !CloudMusicReady || !EnableCloudMusicLyrics ||
-                                    !LyricSessionCoordinator.IsOwner(LyricSourceKind.CloudMusic, sessionGeneration))
+                                    !DeviceCoordinator.IsOwner(LyricSourceKind.CloudMusic, sessionGeneration))
                                     break;
 
-                                bool isPlaying = IsPlaying;
+                                var playbackStatus = GetPlaybackStatus();
+                                bool isPlaying = playbackStatus == Windows.Media.Control.GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing;
+                                bool isExplicitlyPaused = playbackStatus == Windows.Media.Control.GlobalSystemMediaTransportControlsSessionPlaybackStatus.Paused;
                                 bool trackChanged = lastTrackTitle != CurrentTitle || lastTrackArtist != CurrentArtist;
                                 if (trackChanged)
                                 {
@@ -627,6 +637,8 @@ public partial class CloudMusicLyricsToolPageViewModel : ServiceBaseViewModelBas
                                 var lyricsRead = Reader.UsesTimedLyrics
                                     ? Reader.TryReadLyrics($"{CurrentTitle}\n{CurrentArtist}", out lyrics)
                                     : Reader.TryReadLyrics(out lyrics);
+                                if (lyricsRead && !LyricTextPolicy.HasVisibleContent(lyrics))
+                                    lyricsRead = false;
                                 if (trackChanged)
                                     lyricsRead = false;
                                 else if (lyricsRead && !string.IsNullOrEmpty(stalePreviousTrackLyric))
@@ -638,6 +650,7 @@ public partial class CloudMusicLyricsToolPageViewModel : ServiceBaseViewModelBas
                                 }
                                 bool lyricsChanged = lyricsRead && lastRead != lyrics;
 
+                                var resumeLyricMode = isPlaying && _isClockUI;
                                 if (isPlaying && (_isClockUI || trackChanged))
                                 {
                                     if (!wasPlaying && isPlaying)
@@ -659,7 +672,7 @@ public partial class CloudMusicLyricsToolPageViewModel : ServiceBaseViewModelBas
                                 lastTrackTitle = CurrentTitle ?? string.Empty;
                                 lastTrackArtist = CurrentArtist ?? string.Empty;
 
-                                if (!_isClockUI)
+                                if (resumeLyricMode)
                                     ConfigureLyricTransition(
                                         true,
                                         sessionGeneration: sessionGeneration);
@@ -710,6 +723,7 @@ public partial class CloudMusicLyricsToolPageViewModel : ServiceBaseViewModelBas
                                         Console.WriteLine(
                                             $"[INFO]已应用网易云氛围灯颜色：RGB({ambientColor.R}, {ambientColor.G}, {ambientColor.B}) / {ambientEffect} / {ambientBrightness} / {ambientSpeed}");
                                     }
+                                    catch (OperationCanceledException) when (_background.Token.IsCancellationRequested) { throw; }
                                     catch (Exception ex)
                                     {
                                         Console.WriteLine($"[ERROR] SetAmbientLight failed: {ex.Message}");
@@ -720,6 +734,7 @@ public partial class CloudMusicLyricsToolPageViewModel : ServiceBaseViewModelBas
                                         ExecuteAsLyricOwner(sessionGeneration, () => Device.SetPixelScreenColor(new Core.Models.Display.HaloPixelColor(screenColor.R, screenColor.G, screenColor.B)));
                                         Console.WriteLine($"[INFO]已应用网易云屏幕颜色：RGB({screenColor.R}, {screenColor.G}, {screenColor.B})");
                                     }
+                                    catch (OperationCanceledException) when (_background.Token.IsCancellationRequested) { throw; }
                                     catch (Exception ex)
                                     {
                                         Console.WriteLine($"[ERROR] SetPixelScreenColor failed: {ex.Message}");
@@ -729,7 +744,7 @@ public partial class CloudMusicLyricsToolPageViewModel : ServiceBaseViewModelBas
                                 if (!_isClockUI && (lyricsChanged || _forceLyricRefresh))
                                 {
                                     var lyricToSend = lyricsChanged ? lyrics : lastRead;
-                                    if (!string.IsNullOrEmpty(lyricToSend))
+                                    if (LyricTextPolicy.HasVisibleContent(lyricToSend))
                                     {
                                         var lyricWriteSucceeded = false;
                                         var writeWasOwned = ExecuteAsLyricOwner(
@@ -748,7 +763,7 @@ public partial class CloudMusicLyricsToolPageViewModel : ServiceBaseViewModelBas
                                                 if (DisplayProtocol == LyricDisplayProtocol.CustomText &&
                                                     lyrics.DisplayLength() > 30)
                                                 {
-                                                    await Task.Delay(500);
+                                                    await Task.Delay(500, _background.Token);
                                                     if (DisplayProtocol == LyricDisplayProtocol.CustomText)
                                                     {
                                                         ExecuteAsLyricOwner(
@@ -761,13 +776,13 @@ public partial class CloudMusicLyricsToolPageViewModel : ServiceBaseViewModelBas
                                         else
                                         {
                                             _forceLyricRefresh = true;
-                                            await Task.Delay(200);
+                                            await Task.Delay(200, _background.Token);
                                         }
                                     }
                                 }
-                                await Task.Delay(50);
-                                time = isPlaying ? 0 : time + 50;
-                                if (SwitchBackWhenPause && !isPlaying && !_isClockUI && time >= CloudMusicLyricsProfile.SwitchBackTimeout * 1000)
+                                await Task.Delay(50, _background.Token);
+                                time = isExplicitlyPaused ? time + 50 : 0;
+                                if (SwitchBackWhenPause && isExplicitlyPaused && !_isClockUI && time >= CloudMusicLyricsProfile.SwitchBackTimeout * 1000)
                                 {
                                     _isClockUI = true;
                                     ConfigureLyricTransition(false, sessionGeneration: sessionGeneration);
@@ -833,22 +848,26 @@ public partial class CloudMusicLyricsToolPageViewModel : ServiceBaseViewModelBas
                                     catch {}
                                 }
                             }
+                            catch (OperationCanceledException) when (_background.Token.IsCancellationRequested) { throw; }
                             catch (Exception ex)
                             {
                                 Console.WriteLine($"[ERROR]网易云歌词主循环发生错误：{ex.Message}");
                                 Console.WriteLine($"[TRACE]{ex.StackTrace}");
+                                await Task.Delay(500, _background.Token);
                             }
                         }
                         ConfigureLyricTransition(false, sessionGeneration: sessionGeneration);
                         Console.WriteLine($"[DEBUG]主循环已退出");
                     }
                     Console.WriteLine($"[DEBUG]状态\t音响：{DeviceReady} 软件：{CloudMusicReady} 启用状态：{EnableCloudMusicLyrics}");
-                    await Task.Delay(500);
+                    await Task.Delay(500, _background.Token);
                 }
+                catch (OperationCanceledException) when (_background.Token.IsCancellationRequested) { throw; }
                 catch (Exception ex)
                 {
                     Console.WriteLine($"[ERROR]网易云歌词主线程发生错误：{ex.Message}");
                     Console.WriteLine($"[TRACE]{ex.StackTrace}");
+                    await Task.Delay(500, _background.Token);
                 }
             }
         });
@@ -867,7 +886,7 @@ public partial class CloudMusicLyricsToolPageViewModel : ServiceBaseViewModelBas
 
         _lastResolverAttemptVersion = version;
         _lastResolverAttemptTime = DateTime.Now;
-        var resolver = await AddressResolverProvider.GetAsync(version);
+        var resolver = await AddressResolverProvider.GetAsync(version, _background.Token);
         if (resolver is null)
             return false;
 

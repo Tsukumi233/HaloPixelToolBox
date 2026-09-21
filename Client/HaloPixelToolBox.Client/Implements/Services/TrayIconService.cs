@@ -11,6 +11,7 @@ public partial class TrayIconService : GlobalServiceBase, ITrayIconService
 {
     private readonly NotifyIcon _notifyIcon;
     private DispatcherQueue? _dispatcher;
+    private bool _disposed;
 
     public TrayIconService()
     {
@@ -21,19 +22,17 @@ public partial class TrayIconService : GlobalServiceBase, ITrayIconService
             Visible = true
         };
 
-        _notifyIcon.MouseClick += (_, e) =>
-        {
-            if (e.Button == MouseButtons.Right)
-            {
-                ShowTrayMenu();
-            }
-            else
-            {
-                ShowWindow();
-            }
-        };
-
+        _notifyIcon.MouseClick += OnMouseClick;
         _notifyIcon.Visible = true;
+    }
+
+    private void OnMouseClick(object? sender, MouseEventArgs e)
+    {
+        if (_disposed) return;
+        if (e.Button == MouseButtons.Right)
+            ShowTrayMenu();
+        else
+            ShowWindow();
     }
 
     public void Initilize(DispatcherQueue dispatcherQueue)
@@ -45,6 +44,7 @@ public partial class TrayIconService : GlobalServiceBase, ITrayIconService
     {
         _dispatcher?.TryEnqueue(() =>
         {
+            if (_disposed) return;
             App.MainWindow.Activate();
         });
     }
@@ -53,6 +53,7 @@ public partial class TrayIconService : GlobalServiceBase, ITrayIconService
     {
         _dispatcher?.TryEnqueue(() =>
         {
+            if (_disposed) return;
             var menu = new TrayMenuWindow();
             menu.AppWindow.MoveInZOrderAtTop();
             menu.AppWindow.SetPresenter(AppWindowPresenterKind.Overlapped);
@@ -73,9 +74,24 @@ public partial class TrayIconService : GlobalServiceBase, ITrayIconService
 
     public void ExitApp()
     {
-        _notifyIcon.Visible = false;
-        Environment.Exit(0);
+        _dispatcher?.TryEnqueue(async () =>
+        {
+            if (_disposed) return;
+            _notifyIcon.Visible = false;
+            await ((App)Microsoft.UI.Xaml.Application.Current).ShutdownAsync();
+        });
     }
 
-    public void Dispose() => GC.SuppressFinalize(this);
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        _notifyIcon.MouseClick -= OnMouseClick;
+        _notifyIcon.Visible = false;
+        var icon = _notifyIcon.Icon;
+        _notifyIcon.Dispose();
+        icon?.Dispose();
+        _dispatcher = null;
+        GC.SuppressFinalize(this);
+    }
 }

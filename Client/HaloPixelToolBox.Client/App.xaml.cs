@@ -16,6 +16,39 @@ namespace HaloPixelToolBox.Client;
 /// </summary>
 public partial class App : Application
 {
+    private static readonly Lazy<CloudMusicLyricsToolPageViewModel> CloudLyrics = new(() => new());
+    private static readonly Lazy<SpotifyLyricsToolPageViewModel> SpotifyLyrics = new(() => new());
+    public static CloudMusicLyricsToolPageViewModel CloudLyricsViewModel => CloudLyrics.Value;
+    public static SpotifyLyricsToolPageViewModel SpotifyLyricsViewModel => SpotifyLyrics.Value;
+    private Task? _shutdownTask;
+
+    // All normal exits run on the UI thread and share the same shutdown task.
+    public Task ShutdownAsync() => _shutdownTask ??= ShutdownCoreAsync();
+
+    private async Task ShutdownCoreAsync()
+    {
+        Console.WriteLine("正在停止后台任务...");
+        AppShellPage.Current?.ViewModel.Dispose();
+        DeviceCoordinator.BeginShutdown();
+        var tasks = new List<Task>();
+        if (CloudLyrics.IsValueCreated) tasks.Add(CloudLyrics.Value.StopAsync());
+        if (SpotifyLyrics.IsValueCreated) tasks.Add(SpotifyLyrics.Value.StopAsync());
+        try
+        {
+            await Task.WhenAll(tasks);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[WARN]后台资源清理失败：{ex}");
+        }
+        DeviceCoordinator.Dispose();
+        if (CloseWindowService is IDisposable closeService) closeService.Dispose();
+        TrayIconService?.Dispose();
+        AppInstance.GetCurrent().Activated -= App_Activated;
+        UnhandledException -= App_UnhandledException;
+        AppDomain.CurrentDomain.UnhandledException -= CurrentDomain_UnhandledException;
+        Exit();
+    }
     public ITrayIconService TrayIconService { get; private set; } = null!;
     public ICloseWindowService CloseWindowService { get; private set; } = null!;
     /// <summary>
@@ -84,16 +117,8 @@ public partial class App : Application
     private void CurrentDomain_ProcessExit(object? sender, EventArgs e)
     {
         Console.WriteLine("正在退出...");
-        try
-        {
-            CloudMusicLyricsToolPage.Current?.ViewModel.StopLyrics();
-            SpotifyLyricsToolPage.Current?.ViewModel.StopLyrics();
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[WARN]退出时关闭歌词动画失败：{ex.Message}");
-        }
         Console.WriteLine("正在保存日志...");
+        if (!Directory.Exists(AppPath.LogDictionary)) return;
         var logs = Directory.GetFiles(AppPath.LogDictionary);
         if (logs.Length > 10)
         {

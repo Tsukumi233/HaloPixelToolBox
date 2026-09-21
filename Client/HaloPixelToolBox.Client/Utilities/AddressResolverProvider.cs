@@ -3,6 +3,7 @@ using HaloPixelToolBox.Client.Profiles.CrossVersionProfiles;
 using HaloPixelToolBox.Core.Models.Bar;
 using HaloPixelToolBox.Core.Utilities;
 using System.Net;
+using System.Net.Http.Json;
 
 namespace HaloPixelToolBox.Client.Utilities;
 
@@ -11,6 +12,7 @@ namespace HaloPixelToolBox.Client.Utilities;
 /// </summary>
 public static class AddressResolverProvider
 {
+    private static readonly HttpClient Client = new() { Timeout = TimeSpan.FromSeconds(10) };
     public static void LoadCachedResolvers()
     {
         foreach (var pair in CacheProfile.VersionAddress)
@@ -20,7 +22,7 @@ public static class AddressResolverProvider
         }
     }
 
-    public static async Task<AddressResolverModel?> GetAsync(string version)
+    public static async Task<AddressResolverModel?> GetAsync(string version, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(version))
             return null;
@@ -31,18 +33,16 @@ public static class AddressResolverProvider
 
         try
         {
-            var connected = await DataManager.InitializeAsync([SystemProfile.ServerAddress]);
-            if (!connected)
-            {
-                Console.WriteLine($"[WARN]解析地址服务器不可用，尝试使用版本 {version} 的本地缓存");
+            // This public route accepts { version } and returns AddressResolverModel.
+            // Use cancellable HTTP directly: the legacy requester has no cancellation API.
+            var address = SystemProfile.ServerAddress.TrimEnd('/') + "/data/get/versionAddress";
+            using var response = await Client.PostAsJsonAsync(address, new { version }, cancellationToken);
+            if (response.StatusCode != HttpStatusCode.OK)
                 return cached;
-            }
-
-            var response = await DataManager.ClientRequester.Request<AddressResolverModel>("getAddress", version);
-            if (response.StatusCode != HttpStatusCode.OK || response.Result is null)
-                return cached;
-
-            var model = Clone(response.Result, version);
+            var result = await response.Content.ReadFromJsonAsync<AddressResolverModel>(cancellationToken);
+            if (result is null) return cached;
+            cancellationToken.ThrowIfCancellationRequested();
+            var model = Clone(result, version);
             if (!IsValid(model))
                 return cached;
 
@@ -51,6 +51,7 @@ public static class AddressResolverProvider
             Console.WriteLine($"[INFO]已从服务器更新网易云音乐 {version} 的解析地址并写入缓存");
             return model;
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
             Console.WriteLine($"[WARN]获取版本 {version} 的解析地址失败，使用本地缓存：{ex.Message}");

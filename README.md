@@ -15,6 +15,23 @@
 
 ---
 
+## 构建与更新
+
+Windows 上安装 .NET 10 SDK、Windows SDK 和 WinUI 构建工具后，可执行：
+
+```powershell
+dotnet build HaloPixelToolBox.slnx -p:Platform=x64
+dotnet run --project Client/HaloPixelToolBox.Client.Test
+```
+
+默认测试不访问真实音响，覆盖 HID 数据包和后台任务停止、歌词来源互斥；附加 `-- --hardware` 可运行设备枚举检查。
+
+更新检查使用本仓库 `Tsukumi233/HaloPixelToolBox` 的 GitHub 最新正式 Release。发现新版本后打开 Releases 页面，由用户手动下载并退出工具箱后替换文件；不再启动提权安装器、自动下载或覆盖安装。没有正式 Release、网络错误或无法识别的版本标签会显示检查失败。
+
+旧安装器已移出默认 solution。其源码保留，但单独构建需要先把客户端发布产物打包为 `Client/HaloPixelToolBox.Installer/Resources/Resource/Source.zip`；缺失时会给出明确的构建错误。日常构建不需要此文件。
+
+网易云和 Spotify 通过应用级 DeviceCoordinator 共用一个 HID 驱动，来源切换与设备写入串行执行。关闭到托盘会继续同步，选择退出则取消并等待后台任务，再释放设备事件、播放器进程句柄和托盘图标。Spotify 网络请求使用系统代理与正常 TLS 证书校验。
+
 ## 🖥️ 服务端与管理员端
 
 服务端默认监听 `http://localhost:3300/`，客户端和管理员端填写的请求地址为 `http://localhost:3300/api`。如需允许其它设备访问，可通过环境变量修改监听地址和首次创建的管理员账号：

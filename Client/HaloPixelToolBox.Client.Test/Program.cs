@@ -67,6 +67,21 @@ internal class Program
     }
 
     [SMTest]
+    public static void BlankLyricsDoNotReplaceTheCurrentFirmwareLyric()
+    {
+        Ensure(!LyricTextPolicy.HasVisibleContent(string.Empty), "An empty lyric must not be sent.");
+        Ensure(!LyricTextPolicy.HasVisibleContent(" \t\r\n"), "Whitespace-only lyrics must not be sent.");
+        Ensure(!LyricTextPolicy.HasVisibleContent("\u200B\u200D"), "Format-only lyrics must not be sent.");
+        Ensure(LyricTextPolicy.HasVisibleContent("♪"), "A visible instrumental marker must remain valid lyric text.");
+        Ensure(LyricTextPolicy.HasVisibleContent("测试"), "Ordinary lyric text must remain valid.");
+
+        using var device = new HaloPixelDevice();
+        var result = device.ShowLyricText(" \u200B\t", LyricTransitionPreset.Preset1);
+        Ensure(result.Status == LyricWriteStatus.NoChange && !result.TextWritten,
+            "The driver must ignore visually blank lyrics before opening the HID device.");
+    }
+
+    [SMTest]
     public static void LyricTransitionResponsesAreValidatedByFieldsAndChecksum()
     {
         var enabled = HidPacketBuilder.BuildLyricTransition(LyricTransitionPreset.Preset1);

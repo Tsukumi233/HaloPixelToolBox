@@ -53,7 +53,7 @@ public partial class SpotifyLyricsToolPageViewModel : ServiceBaseViewModelBase<s
     [ObservableProperty]
     private string spotifyTrackInfo = "未检测到播放中的歌曲";
 
-    public HaloPixelDevice Device { get; set; } = HaloPixelDevice.Shared;
+    private HaloPixelDevice Device => DeviceCoordinator.Device;
     public SpotifyLyricsReader Reader { get; set; }
 
     public ISettingService SettingService { get; } = ServiceManager.GetService<ISettingService>();
@@ -94,6 +94,18 @@ public partial class SpotifyLyricsToolPageViewModel : ServiceBaseViewModelBase<s
 
     public void StopLyrics() => StopLyricSession(false);
 
+    private readonly BackgroundTaskScope _background = new();
+    private Task? _stopTask;
+    public Task StopAsync() => _stopTask ??= StopCoreAsync();
+
+    private async Task StopCoreAsync()
+    {
+        StopLyrics();
+        await _background.StopAsync();
+        await Reader.DisposeAsync();
+    }
+
+
     partial void OnEnableSpotifyLyricsChanged(bool value)
     {
         SpotifyLyricsProfile.EnableSpotifyLyrics = value;
@@ -102,7 +114,7 @@ public partial class SpotifyLyricsToolPageViewModel : ServiceBaseViewModelBase<s
             DisableCloudMusicLyricsSource();
             Interlocked.Exchange(
                 ref _lyricSessionGeneration,
-                LyricSessionCoordinator.Activate(LyricSourceKind.Spotify));
+                DeviceCoordinator.Activate(LyricSourceKind.Spotify));
 
             _forceColorRefresh = true;
             _forceLyricRefresh = true;
@@ -181,6 +193,7 @@ public partial class SpotifyLyricsToolPageViewModel : ServiceBaseViewModelBase<s
             if (result.TransitionWritten)
                 Console.WriteLine($"[INFO]Spotify 歌词动画：{(enabled ? $"已请求 {LyricTransitionPreset}" : "已请求停用")}");
         }
+        catch (OperationCanceledException) when (_background.Token.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
             _forceLyricRefresh = enabled;
@@ -208,7 +221,7 @@ public partial class SpotifyLyricsToolPageViewModel : ServiceBaseViewModelBase<s
         => ExecuteAsLyricOwner(Interlocked.Read(ref _lyricSessionGeneration), action);
 
     private bool ExecuteAsLyricOwner(long sessionGeneration, Action action)
-        => LyricSessionCoordinator.ExecuteIfOwner(
+        => DeviceCoordinator.ExecuteIfOwner(
             LyricSourceKind.Spotify,
             sessionGeneration,
             action);
@@ -216,7 +229,7 @@ public partial class SpotifyLyricsToolPageViewModel : ServiceBaseViewModelBase<s
     private void StopLyricSession(bool restoreDefaultDisplay)
     {
         var generation = Interlocked.Read(ref _lyricSessionGeneration);
-        LyricSessionCoordinator.Deactivate(
+        DeviceCoordinator.Deactivate(
             LyricSourceKind.Spotify,
             generation,
             () =>
@@ -376,66 +389,54 @@ public partial class SpotifyLyricsToolPageViewModel : ServiceBaseViewModelBase<s
         if (EnableSpotifyLyrics)
         {
             DisableCloudMusicLyricsSource();
-            _lyricSessionGeneration = LyricSessionCoordinator.Activate(LyricSourceKind.Spotify);
+            _lyricSessionGeneration = DeviceCoordinator.Activate(LyricSourceKind.Spotify);
         }
 
         Console.WriteLine("初始化Spotify歌词读取器");
         Reader = new SpotifyLyricsReader();
 
         Console.WriteLine("准备启动Spotify后台线程");
-        Task.Run(async () =>
+        _background.Run(async () =>
         {
-            try
+            while (!_background.Token.IsCancellationRequested)
             {
-                Console.WriteLine("正在搜索花再设备...");
-                while (!DeviceReady)
+                var ready = Device.Initialize();
+                AutoNavigationParameterService.CurrentPage?.DispatcherQueue.TryEnqueue(() =>
                 {
-                    var ready = Device.Initialize();
-                    AutoNavigationParameterService.CurrentPage?.DispatcherQueue.TryEnqueue(() =>
-                    {
-                        DeviceReady = ready;
-                    });
-                    await Task.Delay(500);
-                }
-                Console.WriteLine("花再设备已连接");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[ERROR]搜索花再设备时发生错误：{ex.Message}");
-                Console.WriteLine($"[TRACE]{ex.StackTrace}");
+                    if (!_background.Token.IsCancellationRequested) DeviceReady = ready;
+                });
+                await Task.Delay(500, _background.Token);
             }
         });
-
-        Task.Run(async () =>
+        _background.Run(async () =>
         {
-            try
+            while (!_background.Token.IsCancellationRequested)
             {
-                Console.WriteLine("正在搜索Spotify...");
-                while (!SpotifyReady)
+                var ready = false;
+                try
                 {
-                    var ready = Reader.Initialize();
-                    AutoNavigationParameterService.CurrentPage?.DispatcherQueue.TryEnqueue(() =>
-                    {
-                        SpotifyReady = ready;
-                        SpotifyTrackInfo = !string.IsNullOrEmpty(Reader.CurrentTitle) ? $"{Reader.CurrentArtist} - {Reader.CurrentTitle}" : "未检测到播放中的歌曲";
-                    });
-                    await Task.Delay(500);
+                    ready = await Reader.InitializeAsync(_background.Token);
                 }
-                Console.WriteLine("Spotify已准备就绪");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[ERROR]搜索Spotify时发生错误：{ex.Message}");
-                Console.WriteLine($"[TRACE]{ex.StackTrace}");
+                catch (OperationCanceledException) when (_background.Token.IsCancellationRequested) { throw; }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[WARN]检测音乐播放器失败：{ex.Message}");
+                }
+                AutoNavigationParameterService.CurrentPage?.DispatcherQueue.TryEnqueue(() =>
+                {
+                    if (_background.Token.IsCancellationRequested) return;
+                    SpotifyReady = ready;
+                    SpotifyTrackInfo = !string.IsNullOrEmpty(Reader.CurrentTitle) ? $"{Reader.CurrentArtist} - {Reader.CurrentTitle}" : "未检测到播放中的歌曲";
+                });
+                await Task.Delay(500, _background.Token);
             }
         });
-
-        Task.Run(async () =>
+        _background.Run(async () =>
         {
             Console.WriteLine("启动Spotify歌词主线程");
             Console.WriteLine("等待花再设备...");
-            while (!DeviceReady)
-                await Task.Delay(500);
+            while (!_background.Token.IsCancellationRequested && !DeviceReady)
+                await Task.Delay(500, _background.Token);
 
             if (DeviceReady && EnableSpotifyLyrics)
             {
@@ -443,10 +444,10 @@ public partial class SpotifyLyricsToolPageViewModel : ServiceBaseViewModelBase<s
                 var startupGeneration = Interlocked.Read(ref _lyricSessionGeneration);
                 ConfigureLyricTransition(true, sessionGeneration: startupGeneration);
                 ExecuteAsLyricOwner(startupGeneration, () => TryShowLyricText("Spotify歌词同步已就绪"));
-                await Task.Delay(3000);
+                await Task.Delay(3000, _background.Token);
             }
 
-            while (true)
+            while (!_background.Token.IsCancellationRequested)
             {
                 _isClockUI = false;
                 int time = 0;
@@ -466,15 +467,17 @@ public partial class SpotifyLyricsToolPageViewModel : ServiceBaseViewModelBase<s
                         var lastAmbientLightEffect = SpotifyLyricsProfile.SyncAmbientLightEffect;
                         var lastAmbientLightBrightness = SpotifyLyricsProfile.SyncAmbientLightBrightness;
                         int lastAmbientLightSpeed = SpotifyLyricsProfile.SyncAmbientLightSpeed;
-                        while (true)
+                        while (!_background.Token.IsCancellationRequested)
                         {
                             try
                             {
                                 if (!DeviceReady || !SpotifyReady || !EnableSpotifyLyrics ||
-                                    !LyricSessionCoordinator.IsOwner(LyricSourceKind.Spotify, sessionGeneration))
+                                    !DeviceCoordinator.IsOwner(LyricSourceKind.Spotify, sessionGeneration))
                                     break;
 
-                                bool isPlaying = Reader.IsPlaying;
+                                var playbackStatus = Reader.PlaybackStatus;
+                                bool isPlaying = playbackStatus == Windows.Media.Control.GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing;
+                                bool isExplicitlyPaused = playbackStatus == Windows.Media.Control.GlobalSystemMediaTransportControlsSessionPlaybackStatus.Paused;
                                 bool trackChanged = lastTrackTitle != Reader.CurrentTitle || lastTrackArtist != Reader.CurrentArtist;
                                 if (trackChanged)
                                 {
@@ -484,6 +487,8 @@ public partial class SpotifyLyricsToolPageViewModel : ServiceBaseViewModelBase<s
                                     ExecuteAsLyricOwner(sessionGeneration, Device.ClearLyricReplayCache);
                                 }
                                 var lyricsRead = Reader.TryReadLyrics(out var lyrics);
+                                if (lyricsRead && !LyricTextPolicy.HasVisibleContent(lyrics))
+                                    lyricsRead = false;
                                 if (trackChanged)
                                     lyricsRead = false;
                                 else if (lyricsRead && !string.IsNullOrEmpty(stalePreviousTrackLyric))
@@ -495,6 +500,7 @@ public partial class SpotifyLyricsToolPageViewModel : ServiceBaseViewModelBase<s
                                 }
                                 bool lyricsChanged = lyricsRead && lastRead != lyrics;
 
+                                var resumeLyricMode = isPlaying && _isClockUI;
                                 if (isPlaying && (_isClockUI || trackChanged))
                                 {
                                     if (!wasPlaying && isPlaying)
@@ -516,7 +522,7 @@ public partial class SpotifyLyricsToolPageViewModel : ServiceBaseViewModelBase<s
                                 lastTrackTitle = Reader.CurrentTitle ?? string.Empty;
                                 lastTrackArtist = Reader.CurrentArtist ?? string.Empty;
 
-                                if (!_isClockUI)
+                                if (resumeLyricMode)
                                     ConfigureLyricTransition(
                                         true,
                                         sessionGeneration: sessionGeneration);
@@ -570,6 +576,7 @@ public partial class SpotifyLyricsToolPageViewModel : ServiceBaseViewModelBase<s
                                             Speed = (byte)ambientSpeed
                                         }));
                                     }
+                                    catch (OperationCanceledException) when (_background.Token.IsCancellationRequested) { throw; }
                                     catch (Exception ex)
                                     {
                                         Console.WriteLine($"[ERROR] SetAmbientLight failed: {ex.Message}");
@@ -579,6 +586,7 @@ public partial class SpotifyLyricsToolPageViewModel : ServiceBaseViewModelBase<s
                                     {
                                         ExecuteAsLyricOwner(sessionGeneration, () => Device.SetPixelScreenColor(new Core.Models.Display.HaloPixelColor(screenColor.R, screenColor.G, screenColor.B)));
                                     }
+                                    catch (OperationCanceledException) when (_background.Token.IsCancellationRequested) { throw; }
                                     catch (Exception ex)
                                     {
                                         Console.WriteLine($"[ERROR] SetPixelScreenColor failed: {ex.Message}");
@@ -588,7 +596,7 @@ public partial class SpotifyLyricsToolPageViewModel : ServiceBaseViewModelBase<s
                                 if (!_isClockUI && (lyricsChanged || _forceLyricRefresh))
                                 {
                                     var lyricToSend = lyricsChanged ? lyrics : lastRead;
-                                    if (!string.IsNullOrEmpty(lyricToSend))
+                                    if (LyricTextPolicy.HasVisibleContent(lyricToSend))
                                     {
                                         var lyricWriteSucceeded = false;
                                         var writeWasOwned = ExecuteAsLyricOwner(
@@ -607,7 +615,7 @@ public partial class SpotifyLyricsToolPageViewModel : ServiceBaseViewModelBase<s
                                                 if (DisplayProtocol == LyricDisplayProtocol.CustomText &&
                                                     lyrics.DisplayLength() > 30)
                                                 {
-                                                    await Task.Delay(500);
+                                                    await Task.Delay(500, _background.Token);
                                                     if (DisplayProtocol == LyricDisplayProtocol.CustomText)
                                                     {
                                                         ExecuteAsLyricOwner(
@@ -620,13 +628,13 @@ public partial class SpotifyLyricsToolPageViewModel : ServiceBaseViewModelBase<s
                                         else
                                         {
                                             _forceLyricRefresh = true;
-                                            await Task.Delay(200);
+                                            await Task.Delay(200, _background.Token);
                                         }
                                     }
                                 }
-                                await Task.Delay(50);
-                                time = isPlaying ? 0 : time + 50;
-                                if (SwitchBackWhenPause && !isPlaying && !_isClockUI && time >= SpotifyLyricsProfile.SwitchBackTimeout * 1000)
+                                await Task.Delay(50, _background.Token);
+                                time = isExplicitlyPaused ? time + 50 : 0;
+                                if (SwitchBackWhenPause && isExplicitlyPaused && !_isClockUI && time >= SpotifyLyricsProfile.SwitchBackTimeout * 1000)
                                 {
                                     _isClockUI = true;
                                     ConfigureLyricTransition(false, sessionGeneration: sessionGeneration);
@@ -692,20 +700,24 @@ public partial class SpotifyLyricsToolPageViewModel : ServiceBaseViewModelBase<s
                                     catch {}
                                 }
                             }
+                            catch (OperationCanceledException) when (_background.Token.IsCancellationRequested) { throw; }
                             catch (Exception ex)
                             {
                                 Console.WriteLine($"[ERROR]Spotify歌词主循环发生错误：{ex.Message}");
                                 Console.WriteLine($"[TRACE]{ex.StackTrace}");
+                                await Task.Delay(500, _background.Token);
                             }
                         }
                         ConfigureLyricTransition(false, sessionGeneration: sessionGeneration);
                     }
-                    await Task.Delay(500);
+                    await Task.Delay(500, _background.Token);
                 }
+                catch (OperationCanceledException) when (_background.Token.IsCancellationRequested) { throw; }
                 catch (Exception ex)
                 {
                     Console.WriteLine($"[ERROR]Spotify歌词主线程发生错误：{ex.Message}");
                     Console.WriteLine($"[TRACE]{ex.StackTrace}");
+                    await Task.Delay(500, _background.Token);
                 }
             }
         });

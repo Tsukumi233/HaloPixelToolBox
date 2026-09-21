@@ -10,7 +10,7 @@ namespace HaloPixelToolBox.Core.Utilities;
 /// 串行访问花再 HID 命令通道。A160 歌词状态、设备 epoch 和重试状态都由
 /// 共享驱动持有，避免网易云与 Spotify 各自缓存一份已经失效的固件状态。
 /// </summary>
-public partial class HaloPixelDevice
+public partial class HaloPixelDevice : IDisposable
 {
     private const int EdifierVendorId = 0x2d99;
     private const int HaloPixelBarA160ProductId = 0xa160;
@@ -20,7 +20,6 @@ public partial class HaloPixelDevice
     private static readonly TimeSpan DeviceProbeInterval = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan DeviceListRecoveryDelay = TimeSpan.FromMilliseconds(1500);
     private static readonly TimeSpan DeviceListRecoveryCooldown = TimeSpan.FromSeconds(20);
-    private static readonly TimeSpan LyricTransitionHealthInterval = TimeSpan.FromSeconds(20);
     private static readonly object HidWriteLock = new();
 
     private long _deviceListVersion = 1;
@@ -37,11 +36,25 @@ public partial class HaloPixelDevice
     private LyricTransitionPreset _lyricTransitionPreset = LyricTransitionPreset.Preset1;
     private int _lyricTransitionRetryCount;
     private DateTime _nextLyricTransitionRetryUtc = DateTime.MinValue;
-    private DateTime _lastLyricTransitionWriteUtc = DateTime.MinValue;
     private string _lastLyricText = string.Empty;
     private bool _replayLastLyricAfterReconnect;
 
     public static HaloPixelDevice Shared { get; } = new();
+    private bool _disposed;
+
+    public void Dispose()
+    {
+        lock (HidWriteLock)
+        {
+            if (_disposed) return;
+            _disposed = true;
+            DeviceList.Local.Changed -= Local_Changed;
+            DeviceListChanged = null;
+            CurrentDevice = null;
+            _lastLyricText = string.Empty;
+            _replayLastLyricAfterReconnect = false;
+        }
+    }
 
     public HidDevice? CurrentDevice { get; private set; }
     public bool SupportsFirmwareLyricTransitions =>
@@ -92,7 +105,7 @@ public partial class HaloPixelDevice
     public LyricWriteResult ShowLyricText(string text, LyricTransitionPreset preset)
     {
         ArgumentNullException.ThrowIfNull(text);
-        if (string.IsNullOrEmpty(text))
+        if (!LyricTextPolicy.HasVisibleContent(text))
             return new LyricWriteResult(LyricWriteStatus.NoChange);
 
         var frames = HidPacketBuilder.BuildLyricTextFrames(text);
@@ -173,7 +186,7 @@ public partial class HaloPixelDevice
 
                 var transitionNeeded = ShouldWriteLyricTransitionLocked(preset, enabled, force || attempt > 1);
                 var replayNeeded = enabled && _replayLastLyricAfterReconnect &&
-                                   !string.IsNullOrEmpty(_lastLyricText);
+                                   LyricTextPolicy.HasVisibleContent(_lastLyricText);
                 if (!transitionNeeded && !replayNeeded && !_pixelStateQueryPending)
                 {
                     return new LyricWriteResult(
@@ -194,8 +207,11 @@ public partial class HaloPixelDevice
                         force || attempt > 1);
 
                     var textWritten = false;
-                    if (enabled && _replayLastLyricAfterReconnect &&
-                        !string.IsNullOrEmpty(_lastLyricText))
+                    // A160 may expose its underlying clock page after an enable/preset
+                    // packet. Keep rearm atomic from the user's perspective by restoring
+                    // the current lyric on the same HID stream before releasing the lock.
+                    if (enabled && (transition.Written || _replayLastLyricAfterReconnect) &&
+                        LyricTextPolicy.HasVisibleContent(_lastLyricText))
                     {
                         WriteLyricFramesAndConfirmLocked(
                             stream,
@@ -433,7 +449,6 @@ public partial class HaloPixelDevice
                 _lyricTransitionConfirmed = true;
                 _lyricTransitionRetryCount = 0;
                 _nextLyricTransitionRetryUtc = DateTime.MinValue;
-                _lastLyricTransitionWriteUtc = DateTime.UtcNow;
                 Console.WriteLine(
                     $"[INFO]A160 歌词控制通道：EC EE/EF；歌词={(queriedEnabled ? "开" : "关")}，动画={queriedPreset}");
             }
@@ -448,7 +463,6 @@ public partial class HaloPixelDevice
                 _lyricTransitionConfirmed = true;
                 _lyricTransitionRetryCount = 0;
                 _nextLyricTransitionRetryUtc = DateTime.MinValue;
-                _lastLyricTransitionWriteUtc = DateTime.UtcNow;
                 Console.WriteLine(
                     $"[INFO]A160 歌词控制通道：ED 01/02；歌词={(queriedEnabled ? "开" : "关")}，动画={queriedPreset}");
             }
@@ -480,7 +494,6 @@ public partial class HaloPixelDevice
             callback: null,
             state: null);
         stream.Write(transitionPacket);
-        _lastLyricTransitionWriteUtc = DateTime.UtcNow;
         var confirmed = TryReadLyricTransitionResponse(
             stream,
             pendingAckRead,
@@ -508,7 +521,7 @@ public partial class HaloPixelDevice
                                            TimeSpan.FromSeconds(retryDelaySeconds);
             Console.WriteLine(_lyricTransitionRetryCount < 6
                 ? $"[WARN]A160 已接收歌词动画写入（{protocol}）但 180ms 内未确认；将在 {retryDelaySeconds}s 后重试。"
-                : "[WARN]A160 歌词动画未返回确认；已保留写入结果，后续将通过设备变化或周期健康检查重新武装。");
+                : "[WARN]A160 歌词动画未返回确认；已保留写入结果，后续将在设备变化或新歌词事务中重新武装。");
         }
 
         return new LyricTransitionAttempt(true, confirmed);
@@ -520,8 +533,6 @@ public partial class HaloPixelDevice
         bool force)
     {
         if (force || _lyricTransitionEnabled != enabled || _lyricTransitionPreset != preset)
-            return true;
-        if (enabled && DateTime.UtcNow - _lastLyricTransitionWriteUtc >= LyricTransitionHealthInterval)
             return true;
         if (_lyricTransitionConfirmed)
             return false;
@@ -831,6 +842,7 @@ public partial class HaloPixelDevice
 
     private HidDevice? ResolveCurrentDeviceLocked(bool forceProbe = false)
     {
+        if (_disposed) return null;
         var version = Volatile.Read(ref _deviceListVersion);
         if (!forceProbe && CurrentDevice is not null && _resolvedDeviceListVersion == version)
             return CurrentDevice;
@@ -909,8 +921,7 @@ public partial class HaloPixelDevice
         _lyricTransitionConfirmed = false;
         _lyricTransitionRetryCount = 0;
         _nextLyricTransitionRetryUtc = DateTime.MinValue;
-        _lastLyricTransitionWriteUtc = DateTime.MinValue;
-        _replayLastLyricAfterReconnect = replayLastLyric && !string.IsNullOrEmpty(_lastLyricText);
+        _replayLastLyricAfterReconnect = replayLastLyric && LyricTextPolicy.HasVisibleContent(_lastLyricText);
     }
 
     private static HidStream OpenStream(HidDevice device)

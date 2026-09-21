@@ -10,7 +10,7 @@
     mc:Ignorable="d" Loaded="Page_Loaded">
 
     <Grid x:Name="mainGrid">
-        <ContentDialog x:Name="upgradeDialog" Title="更新新版本" Content="{x:Bind ViewModel.UpgradeContentText, Mode=OneWay}" PrimaryButtonText="更新" SecondaryButtonText="忽略此版本" CloseButtonText="取消" DefaultButton="Primary"/>
+        <ContentDialog x:Name="upgradeDialog" Title="更新新版本" Content="{x:Bind ViewModel.UpgradeContentText, Mode=OneWay}" PrimaryButtonText="打开 Releases 下载" SecondaryButtonText="忽略此版本" CloseButtonText="取消" DefaultButton="Primary"/>
         <ContentDialog x:Name="closeDialog" Title="退出花再工具箱" PrimaryButtonText="确定" SecondaryButtonText="取消" DefaultButton="Primary">
             <StackPanel Spacing="10" Orientation="Vertical">
                 <TextBlock Text="确认退出工具箱吗？"/>

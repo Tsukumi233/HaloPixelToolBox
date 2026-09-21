@@ -80,4 +80,8 @@
     <Resource Include="Resources\Image\wrench_tool.png" />
   </ItemGroup>
 
+  <Target Name="ValidateInstallerPayload" BeforeTargets="PrepareForBuild"
+          Condition="!Exists('Resources\Resource\Source.zip')">
+    <Error Text="旧安装器不属于默认构建。单独构建前请将客户端发布产物打包为 Resources\Resource\Source.zip；日常更新请使用 GitHub Releases。" />
+  </Target>
 </Project>

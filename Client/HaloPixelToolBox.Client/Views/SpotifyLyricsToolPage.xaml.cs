@@ -11,7 +11,7 @@ namespace HaloPixelToolBox.Client.Views;
 public sealed partial class SpotifyLyricsToolPage : Page
 {
     public static SpotifyLyricsToolPage? Current { get; set; }
-    public SpotifyLyricsToolPageViewModel ViewModel { get; set; } = new();
+    public SpotifyLyricsToolPageViewModel ViewModel => App.SpotifyLyricsViewModel;
 
     public SpotifyLyricsToolPage()
     {
@@ -67,7 +67,7 @@ public sealed partial class SpotifyLyricsToolPage : Page
                 break;
         }
 
-        NavigationCacheMode = NavigationCacheMode.Enabled;
+        NavigationCacheMode = NavigationCacheMode.Required;
         Console.WriteLine("Spotify歌词界面初始化完成");
     }
 

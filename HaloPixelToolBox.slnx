@@ -23,7 +23,6 @@
       <Platform Solution="*|x86" Project="x86" />
       <Deploy />
     </Project>
-    <Project Path="Client/HaloPixelToolBox.Installer/HaloPixelToolBox.Installer.csproj" Id="2ff32c8b-4030-4872-af93-8176e0a1edec" />
   </Folder>
   <Folder Name="/Core/">
     <Project Path="Core/HaloPixelToolBox.Core/HaloPixelToolBox.Core.csproj" />

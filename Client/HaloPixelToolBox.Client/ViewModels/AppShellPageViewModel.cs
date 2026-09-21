@@ -1,4 +1,4 @@
-﻿using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.ComponentModel;
 using HaloPixelToolBox.Client.Interface.Services;
 using HaloPixelToolBox.Client.Profiles.CrossVersionProfiles;
 using HaloPixelToolBox.Client.Utilities.Helpers;
@@ -9,8 +9,23 @@ using XFEExtension.NetCore.WinUIHelper.Utilities;
 
 namespace HaloPixelToolBox.Client.ViewModels;
 
-public partial class AppShellPageViewModel : ViewModelBase
+public partial class AppShellPageViewModel : ViewModelBase, IDisposable
 {
+    private readonly CancellationTokenSource _updateCancellation = new();
+    private bool _disposed;
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        _updateCancellation.Cancel();
+        _updateCancellation.Dispose();
+        NavigationViewService.NavigationService.Navigated -= NavigationService_Navigated;
+        PageService.CurrentPageLoaded -= CurrentPage_Loaded;
+        if (PageService is IDisposable pageService) pageService.Dispose();
+        if (CloseWindowService is not null)
+            CloseWindowService.Closed -= CloseWindowService_Closed;
+    }
     [ObservableProperty] public partial int SelectedIndex { get; set; }
     [ObservableProperty] public partial bool NeverAskAgainWhenClose { get; set; }
     [ObservableProperty] public partial bool CanGoBack { get; set; }
@@ -33,11 +48,13 @@ public partial class AppShellPageViewModel : ViewModelBase
         CloseWindowService?.Closed += CloseWindowService_Closed;
         UpgradeService.Initialize(async () =>
         {
+            if (_disposed) return;
             try
             {
                 MessageService.ShowMessage("正在检查更新...", "检查更新", InfoBarSeverity.Informational);
                 Console.WriteLine("正在检查更新...");
-                var upgradeInfo = await UpgradeHelper.GetReleaseNotes();
+                var upgradeInfo = await UpgradeHelper.GetReleaseNotes(_updateCancellation.Token);
+                if (_disposed) return;
                 if (upgradeInfo == null)
                 {
                     MessageService.ShowMessage("检查更新失败，请稍后重试", "检查更新", InfoBarSeverity.Error);
@@ -70,8 +87,9 @@ public partial class AppShellPageViewModel : ViewModelBase
                                 Console.WriteLine("用户取消了更新");
                                 break;
                             case ContentDialogResult.Primary:
-                                Console.WriteLine("用户选择开始更新...");
-                                UpgradeHelper.StartUpdate(upgradeInfo.DownloadUrl);
+                                if (_disposed) return;
+                                Console.WriteLine("用户选择打开 Releases 页面...");
+                                UpgradeHelper.OpenReleases();
                                 break;
                             case ContentDialogResult.Secondary:
                                 Console.WriteLine("用户选择忽略当前版本");
@@ -113,7 +131,7 @@ public partial class AppShellPageViewModel : ViewModelBase
         }
         else
         {
-            Environment.Exit(0);
+            await ((App)Application.Current).ShutdownAsync();
         }
     }
 

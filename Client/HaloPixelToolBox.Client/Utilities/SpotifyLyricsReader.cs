@@ -1,3 +1,4 @@
+using HaloPixelToolBox.Core.Utilities;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -83,7 +84,7 @@ public class LrclibResponse
     public string? ArtistName { get; set; }
 }
 
-public class SpotifyLyricsReader
+public class SpotifyLyricsReader : IAsyncDisposable
 {
     private const int DominantColorSampleSize = 24;
     private const int DominantColorClusterCount = 5;
@@ -117,6 +118,35 @@ public class SpotifyLyricsReader
     private GlobalSystemMediaTransportControlsSession? _currentSession;
     private bool _isInitialized = false;
     private CancellationTokenSource? _cts;
+    private readonly BackgroundTaskScope _background = new();
+    private Task? _disposeTask;
+    private readonly object _trackGate = new();
+    private readonly object _sessionGate = new();
+
+    public ValueTask DisposeAsync() => new(_disposeTask ??= StopCoreAsync());
+
+    private async Task StopCoreAsync()
+    {
+        await _background.StopAsync().ConfigureAwait(false);
+        if (_manager is not null)
+            _manager.SessionsChanged -= OnSessionsChanged;
+        if (_currentSession is not null)
+        {
+            _currentSession.MediaPropertiesChanged -= OnMediaPropertiesChanged;
+            _currentSession.PlaybackInfoChanged -= OnPlaybackInfoChanged;
+            _currentSession.TimelinePropertiesChanged -= OnTimelinePropertiesChanged;
+        }
+        _currentSession = null;
+        _manager = null;
+    }
+
+    private static bool IsSpotifyRunning()
+    {
+        var processes = Process.GetProcessesByName("Spotify");
+        try { return processes.Length > 0; }
+        finally { foreach (var process in processes) process.Dispose(); }
+    }
+
 
     private string _currentTitle = string.Empty;
     private string _currentArtist = string.Empty;
@@ -129,7 +159,7 @@ public class SpotifyLyricsReader
 
     public (byte R, byte G, byte B)? CurrentAlbumColor { get; private set; }
 
-    public bool IsPlaying
+    public GlobalSystemMediaTransportControlsSessionPlaybackStatus? PlaybackStatus
     {
         get
         {
@@ -138,20 +168,22 @@ public class SpotifyLyricsReader
                 try
                 {
                     var playback = _currentSession.GetPlaybackInfo();
-                    return playback.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing;
+                    return playback.PlaybackStatus;
                 }
                 catch { }
             }
-            return false;
+            return null;
         }
     }
 
-    public static async Task<(byte R, byte G, byte B)?> GetDominantColorAsync(Windows.Storage.Streams.IRandomAccessStreamReference thumbnail)
+    public bool IsPlaying => PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing;
+
+    public static async Task<(byte R, byte G, byte B)?> GetDominantColorAsync(Windows.Storage.Streams.IRandomAccessStreamReference thumbnail, CancellationToken cancellationToken = default)
     {
         try
         {
-            using var stream = await thumbnail.OpenReadAsync();
-            var decoder = await Windows.Graphics.Imaging.BitmapDecoder.CreateAsync(stream);
+            using var stream = await thumbnail.OpenReadAsync().AsTask(cancellationToken);
+            var decoder = await Windows.Graphics.Imaging.BitmapDecoder.CreateAsync(stream).AsTask(cancellationToken);
             var transform = new Windows.Graphics.Imaging.BitmapTransform
             {
                 ScaledWidth = DominantColorSampleSize,
@@ -164,7 +196,7 @@ public class SpotifyLyricsReader
                 transform,
                 Windows.Graphics.Imaging.ExifOrientationMode.IgnoreExifOrientation,
                 Windows.Graphics.Imaging.ColorManagementMode.ColorManageToSRgb
-            );
+            ).AsTask(cancellationToken);
             byte[] pixels = pixelData.DetachPixelData();
             var samples = new List<OklabSample>(pixels.Length / 4);
             for (int i = 0; i < pixels.Length; i += 4)
@@ -492,79 +524,19 @@ public class SpotifyLyricsReader
 
     private static HttpClient CreateHttpClient()
     {
-        var handler = new HttpClientHandler
-        {
-            // Ignore certificate errors to bypass any MITM issues caused by local proxy clients decrypting HTTPS
-            ServerCertificateCustomValidationCallback = (sender, cert, chain, sslPolicyErrors) => true
-        };
-
-        // List of common local proxy ports in China:
-        // 7890: Clash / Mihomo
-        // 10809: v2rayN / Xray
-        // 10808: Shadowsocks / SSR
-        // 7898: Clash alternative
-        int[] commonPorts = { 7890, 10809, 10808, 7898 };
-        bool proxyConfigured = false;
-
-        foreach (var port in commonPorts)
-        {
-            if (IsPortOpen(port))
-            {
-                handler.Proxy = new System.Net.WebProxy($"http://127.0.0.1:{port}");
-                handler.UseProxy = true;
-                proxyConfigured = true;
-                break;
-            }
-        }
-
-        var client = new HttpClient(handler);
-        client.DefaultRequestHeaders.UserAgent.Clear();
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
-
-        if (proxyConfigured)
-        {
-            Console.WriteLine("Auto-configured HttpClient to use local proxy for accelerated connection.");
-        }
-        else
-        {
-            Console.WriteLine("No local proxy detected, using direct system default connection.");
-        }
-
+        // Use OS certificate validation and system proxy configuration.
+        var client = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("HaloPixelToolBox/1.2.7");
         return client;
     }
 
-    private static bool IsPortOpen(int port)
+    private async Task<T?> RunWithTimeout<T>(Windows.Foundation.IAsyncOperation<T> asyncOp, int timeoutMs)
     {
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(_background.Token);
         try
         {
-            using var client = new System.Net.Sockets.TcpClient();
-            var connectTask = client.ConnectAsync(IPAddress.Loopback, port);
-            if (connectTask.Wait(250)) // Wait up to 250ms to ensure JIT doesn't miss the handshake
-            {
-                return client.Connected;
-            }
-        }
-        catch { }
-        return false;
-    }
-
-    private static async Task<T?> RunWithTimeout<T>(Windows.Foundation.IAsyncOperation<T> asyncOp, int timeoutMs)
-    {
-        using var cts = new CancellationTokenSource();
-        try
-        {
-            var task = asyncOp.AsTask(cts.Token);
-            var delayTask = Task.Delay(timeoutMs);
-            var completedTask = await Task.WhenAny(task, delayTask);
-            if (completedTask == task)
-            {
-                return await task;
-            }
-            else
-            {
-                cts.Cancel(); // Cancel the WinRT operation
-                Console.WriteLine("WinRT async operation timed out.");
-            }
+            cts.CancelAfter(timeoutMs);
+            return await asyncOp.AsTask(cts.Token);
         }
         catch (Exception ex)
         {
@@ -573,74 +545,67 @@ public class SpotifyLyricsReader
         return default;
     }
 
-    public bool Initialize()
+    public async Task<bool> InitializeAsync(CancellationToken cancellationToken)
     {
-        Console.WriteLine($"Initialize called. isInitialized={_isInitialized}");
-        if (_isInitialized)
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!_isInitialized)
         {
-            UpdateCurrentSession();
-            return _currentSession != null || Process.GetProcessesByName("Spotify").Length > 0;
+            _manager = await GlobalSystemMediaTransportControlsSessionManager.RequestAsync().AsTask(cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            _manager.SessionsChanged += OnSessionsChanged;
+            _isInitialized = true;
+            StartWindowTitlePolling();
         }
-
-        try
-        {
-            var task = Task.Run(async () =>
-            {
-                _manager = await GlobalSystemMediaTransportControlsSessionManager.RequestAsync();
-                _manager.SessionsChanged += OnSessionsChanged;
-                _isInitialized = true;
-                UpdateCurrentSession();
-                StartWindowTitlePolling();
-                return _currentSession != null || Process.GetProcessesByName("Spotify").Length > 0;
-            });
-            return task.Result;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"SpotifyLyricsReader Initialize failed: {ex.Message}");
-            return false;
-        }
+        UpdateCurrentSession();
+        return _currentSession != null || IsSpotifyRunning();
     }
 
     private void OnSessionsChanged(GlobalSystemMediaTransportControlsSessionManager sender, SessionsChangedEventArgs args)
     {
         Console.WriteLine("OnSessionsChanged event fired.");
-        UpdateCurrentSession();
+        _background.Run(() =>
+        {
+            UpdateCurrentSession();
+            return Task.CompletedTask;
+        });
     }
 
     private void UpdateCurrentSession()
     {
-        if (_manager == null) return;
-
-        var sessions = _manager.GetSessions();
-        GlobalSystemMediaTransportControlsSession? spotifySession = null;
-        foreach (var s in sessions)
+        lock (_sessionGate)
         {
-            if (s.SourceAppUserModelId.Contains("Spotify", StringComparison.OrdinalIgnoreCase))
-            {
-                spotifySession = s;
-                break;
-            }
-        }
+            if (_background.Token.IsCancellationRequested || _manager == null) return;
 
-        if (spotifySession != _currentSession)
-        {
-            Console.WriteLine($"Active session changed. Old: {_currentSession?.SourceAppUserModelId ?? "null"}, New: {spotifySession?.SourceAppUserModelId ?? "null"}");
-            if (_currentSession != null)
+            var sessions = _manager.GetSessions();
+            GlobalSystemMediaTransportControlsSession? spotifySession = null;
+            foreach (var s in sessions)
             {
-                _currentSession.MediaPropertiesChanged -= OnMediaPropertiesChanged;
-                _currentSession.PlaybackInfoChanged -= OnPlaybackInfoChanged;
-                _currentSession.TimelinePropertiesChanged -= OnTimelinePropertiesChanged;
+                if (s.SourceAppUserModelId.Contains("Spotify", StringComparison.OrdinalIgnoreCase))
+                {
+                    spotifySession = s;
+                    break;
+                }
             }
 
-            _currentSession = spotifySession;
-
-            if (_currentSession != null)
+            if (spotifySession != _currentSession)
             {
-                _currentSession.MediaPropertiesChanged += OnMediaPropertiesChanged;
-                _currentSession.PlaybackInfoChanged += OnPlaybackInfoChanged;
-                _currentSession.TimelinePropertiesChanged += OnTimelinePropertiesChanged;
-                _ = SyncWithSmtcAsync();
+                Console.WriteLine($"Active session changed. Old: {_currentSession?.SourceAppUserModelId ?? "null"}, New: {spotifySession?.SourceAppUserModelId ?? "null"}");
+                if (_currentSession != null)
+                {
+                    _currentSession.MediaPropertiesChanged -= OnMediaPropertiesChanged;
+                    _currentSession.PlaybackInfoChanged -= OnPlaybackInfoChanged;
+                    _currentSession.TimelinePropertiesChanged -= OnTimelinePropertiesChanged;
+                }
+
+                _currentSession = spotifySession;
+
+                if (_currentSession != null)
+                {
+                    _currentSession.MediaPropertiesChanged += OnMediaPropertiesChanged;
+                    _currentSession.PlaybackInfoChanged += OnPlaybackInfoChanged;
+                    _currentSession.TimelinePropertiesChanged += OnTimelinePropertiesChanged;
+                    _background.Run(SyncWithSmtcAsync);
+                }
             }
         }
     }
@@ -648,24 +613,24 @@ public class SpotifyLyricsReader
     private void OnMediaPropertiesChanged(GlobalSystemMediaTransportControlsSession sender, MediaPropertiesChangedEventArgs args)
     {
         Console.WriteLine("OnMediaPropertiesChanged event fired.");
-        _ = SyncWithSmtcAsync();
+        _background.Run(SyncWithSmtcAsync);
     }
 
     private void OnPlaybackInfoChanged(GlobalSystemMediaTransportControlsSession sender, PlaybackInfoChangedEventArgs args)
     {
         Console.WriteLine("OnPlaybackInfoChanged event fired.");
-        _ = SyncWithSmtcAsync();
+        _background.Run(SyncWithSmtcAsync);
     }
 
     private void OnTimelinePropertiesChanged(GlobalSystemMediaTransportControlsSession sender, TimelinePropertiesChangedEventArgs args)
     {
         Console.WriteLine("OnTimelinePropertiesChanged event fired.");
-        _ = SyncWithSmtcAsync();
+        _background.Run(SyncWithSmtcAsync);
     }
 
     private async Task SyncWithSmtcAsync()
     {
-        if (_currentSession == null) return;
+        if (_background.Token.IsCancellationRequested || _currentSession == null) return;
 
         try
         {
@@ -686,7 +651,7 @@ public class SpotifyLyricsReader
                          if (_lastColorTitle != media.Title)
                          {
                              _lastColorTitle = media.Title;
-                             var color = await GetDominantColorAsync(media.Thumbnail);
+                             var color = await GetDominantColorAsync(media.Thumbnail, _background.Token);
                              if (color.HasValue)
                              {
                                  CurrentAlbumColor = color.Value;
@@ -718,9 +683,9 @@ public class SpotifyLyricsReader
     private void StartWindowTitlePolling()
     {
         Console.WriteLine("Starting window title polling loop.");
-        Task.Run(async () =>
+        _background.Run(async () =>
         {
-            while (true)
+            while (!_background.Token.IsCancellationRequested)
             {
                 try
                 {
@@ -731,7 +696,7 @@ public class SpotifyLyricsReader
                         if (trackInfo.Artist != _currentArtist || trackInfo.Title != _currentTitle)
                         {
                             Console.WriteLine($"Track change detected via polling: {trackInfo.Artist} - {trackInfo.Title}");
-                            _ = HandleTrackChangeAsync(trackInfo.Artist, trackInfo.Title);
+                            _background.Run(() => HandleTrackChangeAsync(trackInfo.Artist, trackInfo.Title));
                         }
                     }
                     else
@@ -741,7 +706,7 @@ public class SpotifyLyricsReader
                             Console.WriteLine("No active track detected, clearing lyrics.");
                             _currentTitle = string.Empty;
                             _currentArtist = string.Empty;
-                            _lyricLines.Clear();
+                            _lyricLines = [];
                         }
                     }
                 }
@@ -749,7 +714,7 @@ public class SpotifyLyricsReader
                 {
                     Console.WriteLine($"Track polling loop error: {ex.Message}");
                 }
-                await Task.Delay(250);
+                await Task.Delay(250, _background.Token);
             }
         });
     }
@@ -757,18 +722,24 @@ public class SpotifyLyricsReader
     private static string GetSpotifyWindowTitle()
     {
         var processes = Process.GetProcessesByName("Spotify");
-        foreach (var p in processes)
+        try
         {
-            try
+            foreach (var p in processes)
             {
-                if (!string.IsNullOrEmpty(p.MainWindowTitle))
+                try
                 {
-                    return p.MainWindowTitle;
+                    if (!string.IsNullOrEmpty(p.MainWindowTitle))
+                        return p.MainWindowTitle;
                 }
+                catch (InvalidOperationException) { /* Process exited during enumeration. */ }
+                catch (System.ComponentModel.Win32Exception) { /* Process access denied. */ }
             }
-            catch { /* Ignore process access errors */ }
+            return string.Empty;
         }
-        return string.Empty;
+        finally
+        {
+            foreach (var process in processes) process.Dispose();
+        }
     }
 
     private async Task<(string Artist, string Title)> GetTrackInfoAsync()
@@ -816,9 +787,13 @@ public class SpotifyLyricsReader
     private async Task HandleTrackChangeAsync(string artist, string track)
     {
         Console.WriteLine($"HandleTrackChangeAsync started. Target: {artist} - {track}");
-        _cts?.Cancel();
-        _cts = new CancellationTokenSource();
-        var token = _cts.Token;
+        using var requestCancellation = CancellationTokenSource.CreateLinkedTokenSource(_background.Token);
+        lock (_trackGate)
+        {
+            _cts?.Cancel();
+            _cts = requestCancellation;
+        }
+        var token = requestCancellation.Token;
 
         try
         {
@@ -827,10 +802,11 @@ public class SpotifyLyricsReader
             _songStartTime = DateTimeOffset.Now;
             _currentDuration = 0;
             _isSmtcSynced = false;
-            _lyricLines.Clear();
+            _lyricLines = [];
 
             // Await SMTC synchronization to get the duration before requesting lyrics
             await SyncWithSmtcAsync();
+            token.ThrowIfCancellationRequested();
 
             Console.WriteLine($"Fetching lyrics for: {_currentArtist} - {_currentTitle} (Duration: {_currentDuration}s)");
 
@@ -849,6 +825,7 @@ public class SpotifyLyricsReader
                     string cachedLrc = await File.ReadAllTextAsync(cacheFilePath, token);
                     if (!string.IsNullOrEmpty(cachedLrc))
                     {
+                        token.ThrowIfCancellationRequested();
                         _lyricLines = LrcParser.Parse(cachedLrc);
                         Console.WriteLine($"Loaded lyrics from local cache file: '{cacheFilePath}'");
                         return;
@@ -860,7 +837,7 @@ public class SpotifyLyricsReader
                 }
             }
 
-            // 2. Local cache miss: query LRCLIB database (with local proxy acceleration enabled)
+            // 2. Local cache miss: query LRCLIB database (using system proxy settings)
             var lyricsRes = await FetchLyricsAsync(_currentTitle, _currentArtist, _currentDuration, token);
 
             if (token.IsCancellationRequested)
@@ -901,6 +878,14 @@ public class SpotifyLyricsReader
         catch (Exception ex)
         {
             Console.WriteLine($"HandleTrackChangeAsync failed: {ex.Message}");
+        }
+        finally
+        {
+            lock (_trackGate)
+            {
+                if (ReferenceEquals(_cts, requestCancellation))
+                    _cts = null;
+            }
         }
     }
 
@@ -1001,7 +986,7 @@ public class SpotifyLyricsReader
 
                 try
                 {
-                    var getResponse = await HttpClient.GetAsync(getUrl, getCts.Token);
+                    using var getResponse = await HttpClient.GetAsync(getUrl, getCts.Token);
                     if (getResponse.IsSuccessStatusCode)
                     {
                         var getRes = await getResponse.Content.ReadFromJsonAsync<LrclibResponse>(cancellationToken: getCts.Token);
@@ -1034,7 +1019,7 @@ public class SpotifyLyricsReader
 
                 try
                 {
-                    var response = await HttpClient.GetAsync(cachedUrl, cachedCts.Token);
+                    using var response = await HttpClient.GetAsync(cachedUrl, cachedCts.Token);
                     if (response.IsSuccessStatusCode)
                     {
                         var cachedRes = await response.Content.ReadFromJsonAsync<LrclibResponse>(cancellationToken: cachedCts.Token);
@@ -1067,7 +1052,7 @@ public class SpotifyLyricsReader
 
                 try
                 {
-                    var searchResponse = await HttpClient.GetAsync(searchUrl, searchCts.Token);
+                    using var searchResponse = await HttpClient.GetAsync(searchUrl, searchCts.Token);
                     if (searchResponse.IsSuccessStatusCode)
                     {
                         var searchResults = await searchResponse.Content.ReadFromJsonAsync<List<LrclibResponse>>(cancellationToken: searchCts.Token);
@@ -1122,7 +1107,7 @@ public class SpotifyLyricsReader
 
                 try
                 {
-                    var fallbackResponse = await HttpClient.GetAsync(fallbackUrl, fallbackCts.Token);
+                    using var fallbackResponse = await HttpClient.GetAsync(fallbackUrl, fallbackCts.Token);
                     if (fallbackResponse.IsSuccessStatusCode)
                     {
                         var fallbackResults = await fallbackResponse.Content.ReadFromJsonAsync<List<LrclibResponse>>(cancellationToken: fallbackCts.Token);

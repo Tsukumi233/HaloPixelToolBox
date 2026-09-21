@@ -14,7 +14,7 @@ namespace HaloPixelToolBox.Client.Views;
 public sealed partial class CloudMusicLyricsToolPage : Page
 {
     public static CloudMusicLyricsToolPage? Current { get; set; }
-    public CloudMusicLyricsToolPageViewModel ViewModel { get; set; } = new();
+    public CloudMusicLyricsToolPageViewModel ViewModel => App.CloudLyricsViewModel;
     public CloudMusicLyricsToolPage()
     {
         Console.WriteLine("网易云歌词工具页面初始化中...");
@@ -69,7 +69,7 @@ public sealed partial class CloudMusicLyricsToolPage : Page
                 break;
         }
 
-        NavigationCacheMode = NavigationCacheMode.Enabled;
+        NavigationCacheMode = NavigationCacheMode.Required;
         Console.WriteLine("网易云歌词工具页面初始化完成");
     }
 
