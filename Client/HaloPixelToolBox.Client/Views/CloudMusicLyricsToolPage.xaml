@@ -48,6 +48,29 @@
                 <controls:SettingsCard Header="启用歌词同步" Description="启用后，网易云的歌词会实时显示在花再 Halo Pixel 音响上">
                     <ToggleSwitch IsOn="{x:Bind ViewModel.EnableCloudMusicLyrics, Mode=TwoWay}"/>
                 </controls:SettingsCard>
+                <controls:SettingsCard Header="歌词显示方式" Description="可选择固件原版歌词动画，或兼容旧版的自定义文字显示">
+                    <ComboBox x:Name="lyricDisplayProtocolComboBox" Tag="HaloPixelToolBox.Client.Profiles.CrossVersionProfiles.CloudMusicLyricsProfile.LyricDisplayProtocol">
+                        <ComboBoxItem Content="原版歌词显示（支持动画）" Tag="FirmwareLyric"/>
+                        <ComboBoxItem Content="自定义文字显示" Tag="CustomText"/>
+                    </ComboBox>
+                </controls:SettingsCard>
+                <controls:SettingsCard Header="歌词切换动画" Description="由 PixelBar 固件执行旧歌词退出和新歌词进入，仅原版歌词显示生效" IsEnabled="{x:Bind ViewModel.IsFirmwareLyricProtocol, Mode=OneWay}">
+                    <ComboBox x:Name="lyricTransitionPresetComboBox" Tag="HaloPixelToolBox.Client.Profiles.CrossVersionProfiles.CloudMusicLyricsProfile.LyricTransitionPreset">
+                        <ComboBoxItem Content="底部上移 / 底部上移" Tag="Preset1"/>
+                        <ComboBoxItem Content="中间扩散 / 两侧收缩" Tag="Preset2"/>
+                        <ComboBoxItem Content="从左往右 / 从右往左" Tag="Preset3"/>
+                        <ComboBoxItem Content="底部上移 / 顶部下移" Tag="Preset4"/>
+                        <ComboBoxItem Content="顶部下移 / 从右往左" Tag="Preset5"/>
+                    </ComboBox>
+                </controls:SettingsCard>
+                <controls:SettingsCard Header="自定义文字位置" Description="设置兼容模式下的歌词默认位置，长歌词仍会自动滚动" IsEnabled="{x:Bind ViewModel.IsCustomTextProtocol, Mode=OneWay}">
+                    <ComboBox x:Name="defaultHaloPixelTextLayoutComboBox" Tag="HaloPixelToolBox.Client.Profiles.CrossVersionProfiles.CloudMusicLyricsProfile.DefaultHaloPixelTextLayout">
+                        <ComboBoxItem Content="左对齐" Tag="Left"/>
+                        <ComboBoxItem Content="右对齐" Tag="Right"/>
+                        <ComboBoxItem Content="居中" Tag="Center"/>
+                        <ComboBoxItem Content="伸展" Tag="Stretch"/>
+                    </ComboBox>
+                </controls:SettingsCard>
                 <controls:SettingsCard Header="开启屏幕颜色同步" Description="自动提取当前歌曲专辑封面主色并应用到像素屏歌词文本颜色">
                     <ToggleSwitch IsOn="{x:Bind ViewModel.EnableScreenColorSync, Mode=TwoWay}"/>
                 </controls:SettingsCard>
@@ -102,14 +125,6 @@
                         </controls:SettingsCard>
                     </controls:SettingsExpander.Items>
                 </controls:SettingsExpander>
-                <controls:SettingsCard Header="歌词位置" Description="设置歌词的默认显示位置">
-                    <ComboBox x:Name="defaultHaloPixelTextLayoutComboBox" Tag="HaloPixelToolBox.Client.Profiles.CrossVersionProfiles.CloudMusicLyricsProfile.DefaultHaloPixelTextLayout">
-                        <ComboBoxItem Content="左对齐" Tag="Left"/>
-                        <ComboBoxItem Content="右对齐" Tag="Right"/>
-                        <ComboBoxItem Content="居中" Tag="Center"/>
-                        <ComboBoxItem Content="伸展" Tag="Stretch"/>
-                    </ComboBox>
-                </controls:SettingsCard>
             </StackPanel>
         </ScrollView>
     </Grid>

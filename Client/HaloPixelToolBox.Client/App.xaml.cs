@@ -84,6 +84,15 @@ public partial class App : Application
     private void CurrentDomain_ProcessExit(object? sender, EventArgs e)
     {
         Console.WriteLine("正在退出...");
+        try
+        {
+            CloudMusicLyricsToolPage.Current?.ViewModel.StopLyrics();
+            SpotifyLyricsToolPage.Current?.ViewModel.StopLyrics();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[WARN]退出时关闭歌词动画失败：{ex.Message}");
+        }
         Console.WriteLine("正在保存日志...");
         var logs = Directory.GetFiles(AppPath.LogDictionary);
         if (logs.Length > 10)

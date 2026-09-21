@@ -1,6 +1,7 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using HaloPixelToolBox.Client.Profiles.CrossVersionProfiles;
 using HaloPixelToolBox.Client.Utilities;
+using HaloPixelToolBox.Client.Views;
 using HaloPixelToolBox.Core.Models.Bar;
 using HaloPixelToolBox.Core.Utilities;
 using System;
@@ -21,6 +22,10 @@ public partial class SpotifyLyricsToolPageViewModel : ServiceBaseViewModelBase<s
     private bool spotifyReady;
     [ObservableProperty]
     private bool enableSpotifyLyrics = SpotifyLyricsProfile.EnableSpotifyLyrics;
+    [ObservableProperty]
+    private LyricDisplayProtocol displayProtocol = SpotifyLyricsProfile.LyricDisplayProtocol;
+    [ObservableProperty]
+    private LyricTransitionPreset lyricTransitionPreset = SpotifyLyricsProfile.LyricTransitionPreset;
     [ObservableProperty]
     private bool switchBackWhenPause = SpotifyLyricsProfile.SwitchBackWhenPause;
     [ObservableProperty]
@@ -48,16 +53,20 @@ public partial class SpotifyLyricsToolPageViewModel : ServiceBaseViewModelBase<s
     [ObservableProperty]
     private string spotifyTrackInfo = "未检测到播放中的歌曲";
 
-    public HaloPixelDevice Device { get; set; } = new();
+    public HaloPixelDevice Device { get; set; } = HaloPixelDevice.Shared;
     public SpotifyLyricsReader Reader { get; set; }
 
     public ISettingService SettingService { get; } = ServiceManager.GetService<ISettingService>();
+    public bool IsFirmwareLyricProtocol => DisplayProtocol == LyricDisplayProtocol.FirmwareLyric;
+    public bool IsCustomTextProtocol => DisplayProtocol == LyricDisplayProtocol.CustomText;
 
-    private bool _forceRefresh;
+    private volatile bool _forceColorRefresh;
+    private volatile bool _forceLyricRefresh;
     private bool _forcePauseLightRefresh;
     private bool _forcePauseScreenRefresh;
     private bool _forcePauseUIModelRefresh;
     private bool _isClockUI;
+    private long _lyricSessionGeneration;
 
     public static (byte R, byte G, byte B) ParseHexColor(string hex)
     {
@@ -79,14 +88,177 @@ public partial class SpotifyLyricsToolPageViewModel : ServiceBaseViewModelBase<s
 
     public void OnNavigatedTo()
     {
-        _forceRefresh = true;
+        _forceColorRefresh = true;
+        _forceLyricRefresh = true;
     }
+
+    public void StopLyrics() => StopLyricSession(false);
 
     partial void OnEnableSpotifyLyricsChanged(bool value)
     {
         SpotifyLyricsProfile.EnableSpotifyLyrics = value;
-        if (value && !_isClockUI)
-            _forceRefresh = true;
+        if (value)
+        {
+            DisableCloudMusicLyricsSource();
+            Interlocked.Exchange(
+                ref _lyricSessionGeneration,
+                LyricSessionCoordinator.Activate(LyricSourceKind.Spotify));
+
+            _forceColorRefresh = true;
+            _forceLyricRefresh = true;
+            ConfigureLyricTransition(true);
+        }
+        else
+        {
+            StopLyricSession(true);
+        }
+    }
+    private static void DisableCloudMusicLyricsSource()
+    {
+        if (CloudMusicLyricsToolPage.Current?.ViewModel is { EnableCloudMusicLyrics: true } cloudMusicViewModel)
+            cloudMusicViewModel.EnableCloudMusicLyrics = false;
+        else
+            CloudMusicLyricsProfile.EnableCloudMusicLyrics = false;
+    }
+    partial void OnDisplayProtocolChanged(LyricDisplayProtocol value)
+    {
+        SpotifyLyricsProfile.LyricDisplayProtocol = value;
+        OnPropertyChanged(nameof(IsFirmwareLyricProtocol));
+        OnPropertyChanged(nameof(IsCustomTextProtocol));
+        if (!EnableSpotifyLyrics || _isClockUI)
+            return;
+
+        ExecuteAsLyricOwner(() =>
+        {
+            if (value == LyricDisplayProtocol.FirmwareLyric)
+            {
+                ConfigureLyricTransitionCore(true, true);
+            }
+            else
+            {
+                ConfigureLyricTransitionCore(false, true);
+                Device.ClearLyricReplayCache();
+                Device.SetTextLayout(SpotifyLyricsProfile.DefaultHaloPixelTextLayout);
+            }
+        });
+        _forceLyricRefresh = true;
+        Console.WriteLine($"[INFO]Spotify 歌词显示方式已切换为：{value}");
+    }
+    partial void OnLyricTransitionPresetChanged(LyricTransitionPreset value)
+    {
+        SpotifyLyricsProfile.LyricTransitionPreset = value;
+        if (EnableSpotifyLyrics && !_isClockUI)
+        {
+            ConfigureLyricTransition(true, true);
+            _forceLyricRefresh = true;
+        }
+    }
+    private void ConfigureLyricTransition(
+        bool enabled,
+        bool force = false,
+        long? sessionGeneration = null)
+    {
+        var generation = sessionGeneration ?? Interlocked.Read(ref _lyricSessionGeneration);
+        ExecuteAsLyricOwner(generation, () => ConfigureLyricTransitionCore(enabled, force));
+    }
+
+    private void ConfigureLyricTransitionCore(bool enabled, bool force = false)
+    {
+        if (!DeviceReady)
+            return;
+        if (enabled && DisplayProtocol != LyricDisplayProtocol.FirmwareLyric)
+            return;
+
+        try
+        {
+            var result = Device.ConfigureLyricTransition(LyricTransitionPreset, enabled, force);
+            if (result.Status is LyricWriteStatus.DeviceUnavailable or LyricWriteStatus.IoError)
+            {
+                _forceLyricRefresh = enabled;
+                return;
+            }
+
+            if (result.TransitionWritten)
+                Console.WriteLine($"[INFO]Spotify 歌词动画：{(enabled ? $"已请求 {LyricTransitionPreset}" : "已请求停用")}");
+        }
+        catch (Exception ex)
+        {
+            _forceLyricRefresh = enabled;
+            Console.WriteLine($"[ERROR]设置 Spotify 歌词动画失败：{ex.Message}");
+        }
+    }
+
+    private bool TryShowLyricText(string text)
+    {
+        if (DisplayProtocol == LyricDisplayProtocol.CustomText)
+        {
+            Device.SetTextLayout(SpotifyLyricsProfile.DefaultHaloPixelTextLayout);
+            return Device.ShowLegacyText(text);
+        }
+
+        var result = Device.ShowLyricText(text, LyricTransitionPreset);
+        if (result.Status != LyricWriteStatus.UnsupportedDevice)
+            return result.TextWritten;
+
+        Device.SetTextLayout(SpotifyLyricsProfile.DefaultHaloPixelTextLayout);
+        return Device.ShowLegacyText(text);
+    }
+
+    private bool ExecuteAsLyricOwner(Action action)
+        => ExecuteAsLyricOwner(Interlocked.Read(ref _lyricSessionGeneration), action);
+
+    private bool ExecuteAsLyricOwner(long sessionGeneration, Action action)
+        => LyricSessionCoordinator.ExecuteIfOwner(
+            LyricSourceKind.Spotify,
+            sessionGeneration,
+            action);
+
+    private void StopLyricSession(bool restoreDefaultDisplay)
+    {
+        var generation = Interlocked.Read(ref _lyricSessionGeneration);
+        LyricSessionCoordinator.Deactivate(
+            LyricSourceKind.Spotify,
+            generation,
+            () =>
+            {
+                ConfigureLyricTransitionCore(false);
+                Device.ClearLyricReplayCache();
+                if (restoreDefaultDisplay)
+                    RestoreDefaultDisplayCore();
+            });
+        Interlocked.CompareExchange(ref _lyricSessionGeneration, 0, generation);
+    }
+
+    private void RestoreDefaultDisplayCore()
+    {
+        if (!DeviceReady)
+            return;
+
+        _isClockUI = true;
+        var screenColor = ParseHexColor(SpotifyLyricsProfile.DefaultScreenColor);
+        var ambientColor = ParseHexColor(SpotifyLyricsProfile.DefaultAmbientLightColor);
+        HidPacketBuilder.CurrentColor = screenColor;
+        try
+        {
+            Device.SetAmbientLight(new Core.Models.Lighting.AmbientLightOptions
+            {
+                Effect = SpotifyLyricsProfile.DefaultAmbientLightEffect,
+                Color = new Core.Models.Display.HaloPixelColor(ambientColor.R, ambientColor.G, ambientColor.B),
+                Brightness = SpotifyLyricsProfile.DefaultAmbientLightBrightness,
+                Speed = (byte)SpotifyLyricsProfile.DefaultAmbientLightSpeed
+            });
+        }
+        catch { }
+        try
+        {
+            Device.SetPixelScreenColor(new Core.Models.Display.HaloPixelColor(screenColor.R, screenColor.G, screenColor.B));
+        }
+        catch { }
+        try
+        {
+            Device.SetUIModel(SpotifyLyricsProfile.DefaultHaloPixelUIModel);
+        }
+        catch { }
     }
     partial void OnSwitchBackWhenPauseChanged(bool value) => SpotifyLyricsProfile.SwitchBackWhenPause = value;
     partial void OnSwitchBackTimeoutChanged(int value) => SpotifyLyricsProfile.SwitchBackTimeout = value;
@@ -94,19 +266,19 @@ public partial class SpotifyLyricsToolPageViewModel : ServiceBaseViewModelBase<s
     {
         SpotifyLyricsProfile.EnableScreenColorSync = value;
         if (!_isClockUI)
-            _forceRefresh = true;
+            _forceColorRefresh = true;
     }
     partial void OnEnableAmbientColorSyncChanged(bool value)
     {
         SpotifyLyricsProfile.EnableAmbientColorSync = value;
         if (!_isClockUI)
-            _forceRefresh = true;
+            _forceColorRefresh = true;
     }
     partial void OnSyncAmbientLightEffectChanged(Core.Models.Lighting.AmbientLightEffect value)
     {
         SpotifyLyricsProfile.SyncAmbientLightEffect = value;
         if (!_isClockUI)
-            _forceRefresh = true;
+            _forceColorRefresh = true;
     }
     partial void OnDefaultAmbientLightEffectChanged(Core.Models.Lighting.AmbientLightEffect value)
     {
@@ -118,13 +290,13 @@ public partial class SpotifyLyricsToolPageViewModel : ServiceBaseViewModelBase<s
     {
         SpotifyLyricsProfile.SyncAmbientLightBrightness = value;
         if (!_isClockUI)
-            _forceRefresh = true;
+            _forceColorRefresh = true;
     }
     partial void OnSyncAmbientLightSpeedChanged(int value)
     {
         SpotifyLyricsProfile.SyncAmbientLightSpeed = value;
         if (!_isClockUI)
-            _forceRefresh = true;
+            _forceColorRefresh = true;
     }
     partial void OnDefaultAmbientLightBrightnessChanged(Core.Models.Lighting.AmbientLightBrightness value)
     {
@@ -201,6 +373,12 @@ public partial class SpotifyLyricsToolPageViewModel : ServiceBaseViewModelBase<s
 
     public SpotifyLyricsToolPageViewModel()
     {
+        if (EnableSpotifyLyrics)
+        {
+            DisableCloudMusicLyricsSource();
+            _lyricSessionGeneration = LyricSessionCoordinator.Activate(LyricSourceKind.Spotify);
+        }
+
         Console.WriteLine("初始化Spotify歌词读取器");
         Reader = new SpotifyLyricsReader();
 
@@ -262,8 +440,9 @@ public partial class SpotifyLyricsToolPageViewModel : ServiceBaseViewModelBase<s
             if (DeviceReady && EnableSpotifyLyrics)
             {
                 Console.WriteLine("花再设备已就绪，显示启动信息");
-                Device.SetTextLayout(HaloPixelTextLayout.Center);
-                Device.ShowText("Spotify歌词同步已就绪");
+                var startupGeneration = Interlocked.Read(ref _lyricSessionGeneration);
+                ConfigureLyricTransition(true, sessionGeneration: startupGeneration);
+                ExecuteAsLyricOwner(startupGeneration, () => TryShowLyricText("Spotify歌词同步已就绪"));
                 await Task.Delay(3000);
             }
 
@@ -275,11 +454,12 @@ public partial class SpotifyLyricsToolPageViewModel : ServiceBaseViewModelBase<s
                 {
                     if (DeviceReady && SpotifyReady && EnableSpotifyLyrics)
                     {
+                        var sessionGeneration = Interlocked.Read(ref _lyricSessionGeneration);
                         Console.WriteLine("[DEBUG]设备均在线，准备进入主循环");
                         string lastRead = string.Empty;
+                        string stalePreviousTrackLyric = string.Empty;
                         string lastTrackTitle = string.Empty;
                         string lastTrackArtist = string.Empty;
-                        bool scrolled = false;
                         bool wasPlaying = false;
                         (byte R, byte G, byte B) lastScreenColor = (0, 0, 0);
                         (byte R, byte G, byte B) lastAmbientColor = (0, 0, 0);
@@ -290,31 +470,56 @@ public partial class SpotifyLyricsToolPageViewModel : ServiceBaseViewModelBase<s
                         {
                             try
                             {
-                                if (!DeviceReady || !SpotifyReady || !EnableSpotifyLyrics)
+                                if (!DeviceReady || !SpotifyReady || !EnableSpotifyLyrics ||
+                                    !LyricSessionCoordinator.IsOwner(LyricSourceKind.Spotify, sessionGeneration))
                                     break;
 
                                 bool isPlaying = Reader.IsPlaying;
                                 bool trackChanged = lastTrackTitle != Reader.CurrentTitle || lastTrackArtist != Reader.CurrentArtist;
-                                bool lyricsChanged = Reader.TryReadLyrics(out var lyrics) && lastRead != lyrics;
+                                if (trackChanged)
+                                {
+                                    if (!string.IsNullOrEmpty(lastRead))
+                                        stalePreviousTrackLyric = lastRead;
+                                    lastRead = string.Empty;
+                                    ExecuteAsLyricOwner(sessionGeneration, Device.ClearLyricReplayCache);
+                                }
+                                var lyricsRead = Reader.TryReadLyrics(out var lyrics);
+                                if (trackChanged)
+                                    lyricsRead = false;
+                                else if (lyricsRead && !string.IsNullOrEmpty(stalePreviousTrackLyric))
+                                {
+                                    if (string.Equals(lyrics, stalePreviousTrackLyric, StringComparison.Ordinal))
+                                        lyricsRead = false;
+                                    else if (!string.IsNullOrEmpty(lyrics))
+                                        stalePreviousTrackLyric = string.Empty;
+                                }
+                                bool lyricsChanged = lyricsRead && lastRead != lyrics;
 
                                 if (isPlaying && (_isClockUI || trackChanged))
                                 {
                                     if (!wasPlaying && isPlaying)
                                     {
                                         _isClockUI = false;
-                                        _forceRefresh = true;
+                                        _forceColorRefresh = true;
+                                        _forceLyricRefresh = true;
                                         time = 0;
                                     }
-                                    else if (lyricsChanged || trackChanged)
+                                    else if (trackChanged)
                                     {
                                         _isClockUI = false;
-                                        _forceRefresh = true;
+                                        _forceColorRefresh = true;
+                                        _forceLyricRefresh = true;
                                         time = 0;
                                     }
                                 }
                                 wasPlaying = isPlaying;
                                 lastTrackTitle = Reader.CurrentTitle ?? string.Empty;
                                 lastTrackArtist = Reader.CurrentArtist ?? string.Empty;
+
+                                if (!_isClockUI)
+                                    ConfigureLyricTransition(
+                                        true,
+                                        sessionGeneration: sessionGeneration);
 
                                 // Update track info text in UI
                                 AutoNavigationParameterService.CurrentPage?.DispatcherQueue.TryEnqueue(() =>
@@ -345,24 +550,25 @@ public partial class SpotifyLyricsToolPageViewModel : ServiceBaseViewModelBase<s
                                 bool colorChanged = lastScreenColor != screenColor || lastAmbientColor != ambientColor;
                                 bool effectChanged = lastAmbientLightEffect != ambientEffect || lastAmbientLightBrightness != ambientBrightness || lastAmbientLightSpeed != ambientSpeed;
 
-                                if (!_isClockUI && (colorChanged || effectChanged || _forceRefresh))
+                                if (!_isClockUI && (colorChanged || effectChanged || _forceColorRefresh))
                                 {
+                                    _forceColorRefresh = false;
                                     lastScreenColor = screenColor;
                                     lastAmbientColor = ambientColor;
                                     lastAmbientLightEffect = ambientEffect;
                                     lastAmbientLightBrightness = ambientBrightness;
                                     lastAmbientLightSpeed = ambientSpeed;
-                                    HidPacketBuilder.CurrentColor = screenColor;
+                                    ExecuteAsLyricOwner(sessionGeneration, () => HidPacketBuilder.CurrentColor = screenColor);
 
                                     try
                                     {
-                                        Device.SetAmbientLight(new Core.Models.Lighting.AmbientLightOptions
+                                        ExecuteAsLyricOwner(sessionGeneration, () => Device.SetAmbientLight(new Core.Models.Lighting.AmbientLightOptions
                                         {
                                             Effect = ambientEffect,
                                             Color = new Core.Models.Display.HaloPixelColor(ambientColor.R, ambientColor.G, ambientColor.B),
                                             Brightness = ambientBrightness,
                                             Speed = (byte)ambientSpeed
-                                        });
+                                        }));
                                     }
                                     catch (Exception ex)
                                     {
@@ -371,7 +577,7 @@ public partial class SpotifyLyricsToolPageViewModel : ServiceBaseViewModelBase<s
 
                                     try
                                     {
-                                        Device.SetPixelScreenColor(new Core.Models.Display.HaloPixelColor(screenColor.R, screenColor.G, screenColor.B));
+                                        ExecuteAsLyricOwner(sessionGeneration, () => Device.SetPixelScreenColor(new Core.Models.Display.HaloPixelColor(screenColor.R, screenColor.G, screenColor.B)));
                                     }
                                     catch (Exception ex)
                                     {
@@ -379,35 +585,43 @@ public partial class SpotifyLyricsToolPageViewModel : ServiceBaseViewModelBase<s
                                     }
                                 }
 
-                                if (!_isClockUI && (lyricsChanged || _forceRefresh))
+                                if (!_isClockUI && (lyricsChanged || _forceLyricRefresh))
                                 {
-                                    _forceRefresh = false;
-                                    if (lyricsChanged)
+                                    var lyricToSend = lyricsChanged ? lyrics : lastRead;
+                                    if (!string.IsNullOrEmpty(lyricToSend))
                                     {
-                                        Console.WriteLine($"已读取到歌词：{lyrics}");
-                                        lastRead = lyrics;
-                                        if (_isClockUI)
-                                        {
-                                            _isClockUI = false;
-                                            _forceRefresh = true;
-                                        }
-                                        time = 0;
-                                        if (scrolled)
-                                        {
-                                            Device.ShowText(string.Empty);
-                                            await Task.Delay(100);
-                                            scrolled = false;
-                                        }
-                                    }
+                                        var lyricWriteSucceeded = false;
+                                        var writeWasOwned = ExecuteAsLyricOwner(
+                                            sessionGeneration,
+                                            () => lyricWriteSucceeded = TryShowLyricText(lyricToSend));
 
-                                    Device.SetTextLayout(SpotifyLyricsProfile.DefaultHaloPixelTextLayout);
-                                    Device.ShowText(lastRead);
+                                        if (writeWasOwned && lyricWriteSucceeded)
+                                        {
+                                            _forceLyricRefresh = false;
+                                            if (lyricsChanged)
+                                            {
+                                                Console.WriteLine($"已读取到歌词：{lyrics}");
+                                                lastRead = lyrics;
+                                                time = 0;
 
-                                    if (lyricsChanged && lastRead.DisplayLength() > 30)
-                                    {
-                                        scrolled = true;
-                                        await Task.Delay(500);
-                                        Device.SetTextLayout(HaloPixelTextLayout.ScrollRightToLeft);
+                                                if (DisplayProtocol == LyricDisplayProtocol.CustomText &&
+                                                    lyrics.DisplayLength() > 30)
+                                                {
+                                                    await Task.Delay(500);
+                                                    if (DisplayProtocol == LyricDisplayProtocol.CustomText)
+                                                    {
+                                                        ExecuteAsLyricOwner(
+                                                            sessionGeneration,
+                                                            () => Device.SetTextLayout(HaloPixelTextLayout.ScrollRightToLeft));
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        else
+                                        {
+                                            _forceLyricRefresh = true;
+                                            await Task.Delay(200);
+                                        }
                                     }
                                 }
                                 await Task.Delay(50);
@@ -415,26 +629,27 @@ public partial class SpotifyLyricsToolPageViewModel : ServiceBaseViewModelBase<s
                                 if (SwitchBackWhenPause && !isPlaying && !_isClockUI && time >= SpotifyLyricsProfile.SwitchBackTimeout * 1000)
                                 {
                                     _isClockUI = true;
+                                    ConfigureLyricTransition(false, sessionGeneration: sessionGeneration);
                                     (byte R, byte G, byte B) finalScreenColor = ParseHexColor(SpotifyLyricsProfile.DefaultScreenColor);
                                     (byte R, byte G, byte B) finalAmbientColor = ParseHexColor(SpotifyLyricsProfile.DefaultAmbientLightColor);
-                                    HidPacketBuilder.CurrentColor = finalScreenColor;
+                                    ExecuteAsLyricOwner(sessionGeneration, () => HidPacketBuilder.CurrentColor = finalScreenColor);
                                     try
                                     {
-                                        Device.SetAmbientLight(new Core.Models.Lighting.AmbientLightOptions
+                                        ExecuteAsLyricOwner(sessionGeneration, () => Device.SetAmbientLight(new Core.Models.Lighting.AmbientLightOptions
                                         {
                                             Effect = SpotifyLyricsProfile.DefaultAmbientLightEffect,
                                             Color = new Core.Models.Display.HaloPixelColor(finalAmbientColor.R, finalAmbientColor.G, finalAmbientColor.B),
                                             Brightness = SpotifyLyricsProfile.DefaultAmbientLightBrightness,
                                             Speed = (byte)SpotifyLyricsProfile.DefaultAmbientLightSpeed
-                                        });
+                                        }));
                                     }
                                     catch {}
                                     try
                                     {
-                                        Device.SetPixelScreenColor(new Core.Models.Display.HaloPixelColor(finalScreenColor.R, finalScreenColor.G, finalScreenColor.B));
+                                        ExecuteAsLyricOwner(sessionGeneration, () => Device.SetPixelScreenColor(new Core.Models.Display.HaloPixelColor(finalScreenColor.R, finalScreenColor.G, finalScreenColor.B)));
                                     }
                                     catch {}
-                                    Device.SetUIModel(SpotifyLyricsProfile.DefaultHaloPixelUIModel);
+                                    ExecuteAsLyricOwner(sessionGeneration, () => Device.SetUIModel(SpotifyLyricsProfile.DefaultHaloPixelUIModel));
                                     Console.WriteLine("已切换至时钟界面");
                                 }
 
@@ -444,13 +659,13 @@ public partial class SpotifyLyricsToolPageViewModel : ServiceBaseViewModelBase<s
                                     (byte R, byte G, byte B) finalAmbientColor = ParseHexColor(SpotifyLyricsProfile.DefaultAmbientLightColor);
                                     try
                                     {
-                                        Device.SetAmbientLight(new Core.Models.Lighting.AmbientLightOptions
+                                        ExecuteAsLyricOwner(sessionGeneration, () => Device.SetAmbientLight(new Core.Models.Lighting.AmbientLightOptions
                                         {
                                             Effect = SpotifyLyricsProfile.DefaultAmbientLightEffect,
                                             Color = new Core.Models.Display.HaloPixelColor(finalAmbientColor.R, finalAmbientColor.G, finalAmbientColor.B),
                                             Brightness = SpotifyLyricsProfile.DefaultAmbientLightBrightness,
                                             Speed = (byte)SpotifyLyricsProfile.DefaultAmbientLightSpeed
-                                        });
+                                        }));
                                     }
                                     catch {}
                                 }
@@ -459,10 +674,10 @@ public partial class SpotifyLyricsToolPageViewModel : ServiceBaseViewModelBase<s
                                 {
                                     _forcePauseScreenRefresh = false;
                                     (byte R, byte G, byte B) finalScreenColor = ParseHexColor(SpotifyLyricsProfile.DefaultScreenColor);
-                                    HidPacketBuilder.CurrentColor = finalScreenColor;
+                                    ExecuteAsLyricOwner(sessionGeneration, () => HidPacketBuilder.CurrentColor = finalScreenColor);
                                     try
                                     {
-                                        Device.SetPixelScreenColor(new Core.Models.Display.HaloPixelColor(finalScreenColor.R, finalScreenColor.G, finalScreenColor.B));
+                                        ExecuteAsLyricOwner(sessionGeneration, () => Device.SetPixelScreenColor(new Core.Models.Display.HaloPixelColor(finalScreenColor.R, finalScreenColor.G, finalScreenColor.B)));
                                     }
                                     catch {}
                                 }
@@ -472,7 +687,7 @@ public partial class SpotifyLyricsToolPageViewModel : ServiceBaseViewModelBase<s
                                     _forcePauseUIModelRefresh = false;
                                     try
                                     {
-                                        Device.SetUIModel(SpotifyLyricsProfile.DefaultHaloPixelUIModel);
+                                        ExecuteAsLyricOwner(sessionGeneration, () => Device.SetUIModel(SpotifyLyricsProfile.DefaultHaloPixelUIModel));
                                     }
                                     catch {}
                                 }
@@ -483,6 +698,7 @@ public partial class SpotifyLyricsToolPageViewModel : ServiceBaseViewModelBase<s
                                 Console.WriteLine($"[TRACE]{ex.StackTrace}");
                             }
                         }
+                        ConfigureLyricTransition(false, sessionGeneration: sessionGeneration);
                     }
                     await Task.Delay(500);
                 }

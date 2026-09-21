@@ -21,6 +21,18 @@ public partial class SpotifyLyricsProfile : XFEProfile
     private bool enableSpotifyLyrics = false;
 
     /// <summary>
+    /// 歌词显示协议
+    /// </summary>
+    [ProfileProperty]
+    private LyricDisplayProtocol lyricDisplayProtocol = LyricDisplayProtocol.FirmwareLyric;
+
+    /// <summary>
+    /// PixelBar 固件歌词转场预设（协议值 1-5）
+    /// </summary>
+    [ProfileProperty]
+    private LyricTransitionPreset lyricTransitionPreset = LyricTransitionPreset.Preset1;
+
+    /// <summary>
     /// 当暂停时切换回默认显示内容
     /// </summary>
     [ProfileProperty]

@@ -21,10 +21,30 @@ public sealed partial class CloudMusicLyricsToolPage : Page
         Current = this;
         InitializeComponent();
         ViewModel.AutoNavigationParameterService.Initialize(this);
+        ViewModel.SettingService.AddComboBox(lyricDisplayProtocolComboBox, ProfileHelper.GetEnumProfileSaveFunc<LyricDisplayProtocol>(), ProfileHelper.GetEnumProfileLoadFuncForComboBox());
+        ViewModel.SettingService.AddComboBox(lyricTransitionPresetComboBox, ProfileHelper.GetEnumProfileSaveFunc<LyricTransitionPreset>(), ProfileHelper.GetEnumProfileLoadFuncForComboBox());
         ViewModel.SettingService.AddComboBox(defaultHaloPixelTextLayoutComboBox, ProfileHelper.GetEnumProfileSaveFunc<HaloPixelTextLayout>(), ProfileHelper.GetEnumProfileLoadFuncForComboBox());
         ViewModel.SettingService.AddComboBox(syncAmbientLightEffectComboBox, ProfileHelper.GetEnumProfileSaveFunc<AmbientLightEffect>(), ProfileHelper.GetEnumProfileLoadFuncForComboBox());
         ViewModel.SettingService.Initialize();
         ViewModel.SettingService.RegisterEvents();
+
+        lyricDisplayProtocolComboBox.SelectionChanged += (s, e) =>
+        {
+            if (lyricDisplayProtocolComboBox.SelectedItem is ComboBoxItem item &&
+                Enum.TryParse<LyricDisplayProtocol>(item.Tag?.ToString(), out var protocol))
+            {
+                ViewModel.DisplayProtocol = protocol;
+            }
+        };
+
+        lyricTransitionPresetComboBox.SelectionChanged += (s, e) =>
+        {
+            if (lyricTransitionPresetComboBox.SelectedItem is ComboBoxItem item &&
+                Enum.TryParse<LyricTransitionPreset>(item.Tag?.ToString(), out var preset))
+            {
+                ViewModel.LyricTransitionPreset = preset;
+            }
+        };
 
         // Propagate ComboBox selection changes to ViewModel properties
         syncAmbientLightEffectComboBox.SelectionChanged += (s, e) =>

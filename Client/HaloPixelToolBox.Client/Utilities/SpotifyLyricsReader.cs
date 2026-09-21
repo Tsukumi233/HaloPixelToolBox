@@ -85,6 +85,13 @@ public class LrclibResponse
 
 public class SpotifyLyricsReader
 {
+    private const int DominantColorSampleSize = 24;
+    private const int DominantColorClusterCount = 5;
+    private const int DominantColorIterationCount = 6;
+
+    private readonly record struct OklabSample(double L, double A, double B, double Weight);
+
+    private static readonly double[] SrgbToLinearLookup = CreateSrgbToLinearLookup();
     private static HttpClient? _httpClient;
     private static readonly object HttpLock = new object();
 
@@ -147,36 +154,318 @@ public class SpotifyLyricsReader
             var decoder = await Windows.Graphics.Imaging.BitmapDecoder.CreateAsync(stream);
             var transform = new Windows.Graphics.Imaging.BitmapTransform
             {
-                ScaledWidth = 16,
-                ScaledHeight = 16,
+                ScaledWidth = DominantColorSampleSize,
+                ScaledHeight = DominantColorSampleSize,
                 InterpolationMode = Windows.Graphics.Imaging.BitmapInterpolationMode.Linear
             };
             var pixelData = await decoder.GetPixelDataAsync(
                 Windows.Graphics.Imaging.BitmapPixelFormat.Rgba8,
-                Windows.Graphics.Imaging.BitmapAlphaMode.Ignore,
+                Windows.Graphics.Imaging.BitmapAlphaMode.Straight,
                 transform,
                 Windows.Graphics.Imaging.ExifOrientationMode.IgnoreExifOrientation,
                 Windows.Graphics.Imaging.ColorManagementMode.ColorManageToSRgb
             );
             byte[] pixels = pixelData.DetachPixelData();
-            long rSum = 0, gSum = 0, bSum = 0;
-            int pixelCount = pixels.Length / 4;
+            var samples = new List<OklabSample>(pixels.Length / 4);
             for (int i = 0; i < pixels.Length; i += 4)
             {
-                rSum += pixels[i];
-                gSum += pixels[i + 1];
-                bSum += pixels[i + 2];
+                var alpha = pixels[i + 3] / 255d;
+                if (alpha < 0.05)
+                    continue;
+
+                var pixelIndex = i / 4;
+                var x = pixelIndex % DominantColorSampleSize;
+                var y = pixelIndex / DominantColorSampleSize;
+                var normalizedX = ((x + 0.5) / DominantColorSampleSize * 2) - 1;
+                var normalizedY = ((y + 0.5) / DominantColorSampleSize * 2) - 1;
+                var centerDistance = Math.Min(
+                    1,
+                    Math.Sqrt(normalizedX * normalizedX + normalizedY * normalizedY) * 0.7071067811865476);
+                var spatialWeight = (1 + 0.2 * (1 - centerDistance)) * alpha;
+
+                samples.Add(ToOklab(pixels[i], pixels[i + 1], pixels[i + 2], spatialWeight));
             }
-            if (pixelCount > 0)
-            {
-                return ((byte)(rSum / pixelCount), (byte)(gSum / pixelCount), (byte)(bSum / pixelCount));
-            }
+
+            if (samples.Count > 0)
+                return FindPerceptualDominantColor(samples);
         }
         catch (Exception ex)
         {
             Console.WriteLine($"[ERROR] GetDominantColorAsync failed: {ex.Message}\n{ex.StackTrace}");
         }
         return null;
+    }
+
+    private static (byte R, byte G, byte B) FindPerceptualDominantColor(IReadOnlyList<OklabSample> samples)
+    {
+        var maximumClusterCount = Math.Min(DominantColorClusterCount, samples.Count);
+        var centerL = new double[maximumClusterCount];
+        var centerA = new double[maximumClusterCount];
+        var centerB = new double[maximumClusterCount];
+
+        var totalWeight = 0d;
+        var meanL = 0d;
+        var meanA = 0d;
+        var meanB = 0d;
+        foreach (var sample in samples)
+        {
+            totalWeight += sample.Weight;
+            meanL += sample.L * sample.Weight;
+            meanA += sample.A * sample.Weight;
+            meanB += sample.B * sample.Weight;
+        }
+        meanL /= totalWeight;
+        meanA /= totalWeight;
+        meanB /= totalWeight;
+
+        var firstSeed = samples[0];
+        var firstSeedDistance = double.MaxValue;
+        foreach (var sample in samples)
+        {
+            var distance = OklabDistanceSquared(sample.L, sample.A, sample.B, meanL, meanA, meanB);
+            if (distance < firstSeedDistance)
+            {
+                firstSeedDistance = distance;
+                firstSeed = sample;
+            }
+        }
+        centerL[0] = firstSeed.L;
+        centerA[0] = firstSeed.A;
+        centerB[0] = firstSeed.B;
+
+        // Deterministic farthest-point seeding gives k-means a useful spread across
+        // the cover palette without allocating a random generator or histogram.
+        var clusterCount = 1;
+        while (clusterCount < maximumClusterCount)
+        {
+            var bestSampleIndex = -1;
+            var bestSeedScore = 0d;
+            for (var sampleIndex = 0; sampleIndex < samples.Count; sampleIndex++)
+            {
+                var sample = samples[sampleIndex];
+                var minimumDistance = double.MaxValue;
+                for (var clusterIndex = 0; clusterIndex < clusterCount; clusterIndex++)
+                {
+                    var distance = OklabDistanceSquared(
+                        sample.L,
+                        sample.A,
+                        sample.B,
+                        centerL[clusterIndex],
+                        centerA[clusterIndex],
+                        centerB[clusterIndex]);
+                    minimumDistance = Math.Min(minimumDistance, distance);
+                }
+
+                var seedScore = minimumDistance * sample.Weight;
+                if (seedScore > bestSeedScore)
+                {
+                    bestSeedScore = seedScore;
+                    bestSampleIndex = sampleIndex;
+                }
+            }
+
+            if (bestSampleIndex < 0 || bestSeedScore < 1e-10)
+                break;
+
+            var seed = samples[bestSampleIndex];
+            centerL[clusterCount] = seed.L;
+            centerA[clusterCount] = seed.A;
+            centerB[clusterCount] = seed.B;
+            clusterCount++;
+        }
+
+        var clusterWeights = new double[clusterCount];
+        for (var iteration = 0; iteration < DominantColorIterationCount; iteration++)
+        {
+            Array.Clear(clusterWeights);
+            var sumL = new double[clusterCount];
+            var sumA = new double[clusterCount];
+            var sumB = new double[clusterCount];
+
+            foreach (var sample in samples)
+            {
+                var nearestCluster = FindNearestCluster(sample, centerL, centerA, centerB, clusterCount);
+                clusterWeights[nearestCluster] += sample.Weight;
+                sumL[nearestCluster] += sample.L * sample.Weight;
+                sumA[nearestCluster] += sample.A * sample.Weight;
+                sumB[nearestCluster] += sample.B * sample.Weight;
+            }
+
+            var movement = 0d;
+            for (var clusterIndex = 0; clusterIndex < clusterCount; clusterIndex++)
+            {
+                if (clusterWeights[clusterIndex] <= 0)
+                    continue;
+
+                var newL = sumL[clusterIndex] / clusterWeights[clusterIndex];
+                var newA = sumA[clusterIndex] / clusterWeights[clusterIndex];
+                var newB = sumB[clusterIndex] / clusterWeights[clusterIndex];
+                movement += OklabDistanceSquared(
+                    centerL[clusterIndex],
+                    centerA[clusterIndex],
+                    centerB[clusterIndex],
+                    newL,
+                    newA,
+                    newB);
+                centerL[clusterIndex] = newL;
+                centerA[clusterIndex] = newA;
+                centerB[clusterIndex] = newB;
+            }
+
+            if (movement < 1e-8)
+                break;
+        }
+
+        Array.Clear(clusterWeights);
+        foreach (var sample in samples)
+        {
+            var nearestCluster = FindNearestCluster(sample, centerL, centerA, centerB, clusterCount);
+            clusterWeights[nearestCluster] += sample.Weight;
+        }
+
+        var hasChromaticCluster = false;
+        for (var clusterIndex = 0; clusterIndex < clusterCount; clusterIndex++)
+        {
+            var share = clusterWeights[clusterIndex] / totalWeight;
+            var chroma = Math.Sqrt(centerA[clusterIndex] * centerA[clusterIndex] + centerB[clusterIndex] * centerB[clusterIndex]);
+            if (share >= 0.025 && chroma >= 0.04)
+            {
+                hasChromaticCluster = true;
+                break;
+            }
+        }
+
+        var selectedCluster = 0;
+        var selectedScore = double.MinValue;
+        for (var clusterIndex = 0; clusterIndex < clusterCount; clusterIndex++)
+        {
+            if (clusterWeights[clusterIndex] <= 0)
+                continue;
+
+            var share = clusterWeights[clusterIndex] / totalWeight;
+            var lightness = centerL[clusterIndex];
+            var chroma = Math.Sqrt(centerA[clusterIndex] * centerA[clusterIndex] + centerB[clusterIndex] * centerB[clusterIndex]);
+            var normalizedChroma = Math.Clamp(chroma / 0.22, 0, 1);
+            var populationScore = Math.Pow(share, 0.72);
+            var chromaScore = hasChromaticCluster ? 0.6 + 1.1 * normalizedChroma : 1;
+            if (hasChromaticCluster && chroma < 0.025)
+                chromaScore *= 0.65;
+
+            var middleLightness = Math.Clamp(1 - Math.Abs(lightness - 0.58) / 0.58, 0, 1);
+            var lightnessScore = 0.55 + 0.45 * middleLightness;
+            if (lightness < 0.06 || lightness > 0.96)
+                lightnessScore *= 0.2;
+            else if (lightness < 0.16)
+                lightnessScore *= 0.55;
+            else if (lightness > 0.9)
+                lightnessScore *= 0.6;
+
+            var score = populationScore * chromaScore * lightnessScore;
+            if (score > selectedScore)
+            {
+                selectedScore = score;
+                selectedCluster = clusterIndex;
+            }
+        }
+
+        return OklabToSrgb(centerL[selectedCluster], centerA[selectedCluster], centerB[selectedCluster]);
+    }
+
+    private static int FindNearestCluster(
+        OklabSample sample,
+        IReadOnlyList<double> centerL,
+        IReadOnlyList<double> centerA,
+        IReadOnlyList<double> centerB,
+        int clusterCount)
+    {
+        var nearestCluster = 0;
+        var nearestDistance = double.MaxValue;
+        for (var clusterIndex = 0; clusterIndex < clusterCount; clusterIndex++)
+        {
+            var distance = OklabDistanceSquared(
+                sample.L,
+                sample.A,
+                sample.B,
+                centerL[clusterIndex],
+                centerA[clusterIndex],
+                centerB[clusterIndex]);
+            if (distance < nearestDistance)
+            {
+                nearestDistance = distance;
+                nearestCluster = clusterIndex;
+            }
+        }
+        return nearestCluster;
+    }
+
+    private static double OklabDistanceSquared(
+        double firstL,
+        double firstA,
+        double firstB,
+        double secondL,
+        double secondA,
+        double secondB)
+    {
+        var deltaL = firstL - secondL;
+        var deltaA = firstA - secondA;
+        var deltaB = firstB - secondB;
+        return deltaL * deltaL + deltaA * deltaA + deltaB * deltaB;
+    }
+
+    private static OklabSample ToOklab(byte red, byte green, byte blue, double weight)
+    {
+        var linearRed = SrgbToLinearLookup[red];
+        var linearGreen = SrgbToLinearLookup[green];
+        var linearBlue = SrgbToLinearLookup[blue];
+
+        var l = 0.4122214708 * linearRed + 0.5363325363 * linearGreen + 0.0514459929 * linearBlue;
+        var m = 0.2119034982 * linearRed + 0.6806995451 * linearGreen + 0.1073969566 * linearBlue;
+        var s = 0.0883024619 * linearRed + 0.2817188376 * linearGreen + 0.6299787005 * linearBlue;
+        var cubeRootL = Math.Cbrt(l);
+        var cubeRootM = Math.Cbrt(m);
+        var cubeRootS = Math.Cbrt(s);
+
+        return new OklabSample(
+            0.2104542553 * cubeRootL + 0.7936177850 * cubeRootM - 0.0040720468 * cubeRootS,
+            1.9779984951 * cubeRootL - 2.4285922050 * cubeRootM + 0.4505937099 * cubeRootS,
+            0.0259040371 * cubeRootL + 0.7827717662 * cubeRootM - 0.8086757660 * cubeRootS,
+            weight);
+    }
+
+    private static (byte R, byte G, byte B) OklabToSrgb(double lightness, double a, double b)
+    {
+        var cubeRootL = lightness + 0.3963377774 * a + 0.2158037573 * b;
+        var cubeRootM = lightness - 0.1055613458 * a - 0.0638541728 * b;
+        var cubeRootS = lightness - 0.0894841775 * a - 1.2914855480 * b;
+        var l = cubeRootL * cubeRootL * cubeRootL;
+        var m = cubeRootM * cubeRootM * cubeRootM;
+        var s = cubeRootS * cubeRootS * cubeRootS;
+        var linearRed = 4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s;
+        var linearGreen = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s;
+        var linearBlue = -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s;
+
+        return (ToSrgbByte(linearRed), ToSrgbByte(linearGreen), ToSrgbByte(linearBlue));
+    }
+
+    private static byte ToSrgbByte(double linearColor)
+    {
+        var srgb = linearColor <= 0.0031308
+            ? 12.92 * linearColor
+            : 1.055 * Math.Pow(linearColor, 1 / 2.4) - 0.055;
+        return (byte)Math.Round(Math.Clamp(srgb, 0, 1) * 255);
+    }
+
+    private static double[] CreateSrgbToLinearLookup()
+    {
+        var lookup = new double[256];
+        for (var value = 0; value < lookup.Length; value++)
+        {
+            var srgb = value / 255d;
+            lookup[value] = srgb <= 0.04045
+                ? srgb / 12.92
+                : Math.Pow((srgb + 0.055) / 1.055, 2.4);
+        }
+        return lookup;
     }
 
     public string CurrentTitle => _currentTitle;
