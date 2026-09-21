@@ -368,7 +368,26 @@ public class SpotifyLyricsReader
             }
         }
 
-        return OklabToSrgb(centerL[selectedCluster], centerA[selectedCluster], centerB[selectedCluster]);
+        var color = OklabToSrgb(centerL[selectedCluster], centerA[selectedCluster], centerB[selectedCluster]);
+        return NormalizeAlbumColorBrightness(color);
+    }
+
+    private static (byte R, byte G, byte B) NormalizeAlbumColorBrightness((byte R, byte G, byte B) color)
+    {
+        // HSV 的 V 最低为 50%（8 位通道向上取整为 128），亮色保持原样。
+        // 暗色等比例缩放 RGB，保留色相和饱和度；纯黑使用最低亮度的中性灰。
+        const byte minimumBrightness = 128;
+        var maximum = Math.Max(color.R, Math.Max(color.G, color.B));
+        if (maximum >= minimumBrightness)
+            return color;
+        if (maximum == 0)
+            return (minimumBrightness, minimumBrightness, minimumBrightness);
+
+        var scale = (double)minimumBrightness / maximum;
+        return (
+            (byte)Math.Round(color.R * scale),
+            (byte)Math.Round(color.G * scale),
+            (byte)Math.Round(color.B * scale));
     }
 
     private static int FindNearestCluster(
